@@ -23,7 +23,7 @@ set @exclude_system = 1; --So system tables are excluded
 
 --================================
 --
---Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_primary_databases 
+--Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_primary_databases, which also functions as the check to make sure the db is logshipped
 --
 
 SELECT top 1
@@ -43,6 +43,9 @@ insert into @backup_files (
  , backup_file_name
 )
 --Changed the format of {backupTime} to include milliseconds so it will fit the formatting of the other logshipping files
+--After some testing I found that it is in fact necessary to have the formatting this way. A .trn file that left out the seconds and milliseconds was not
+--found by the secondary copy job. A later backup with the necessary seconds and milliseconds was found, however. This may be due to the restore job using the datetime
+--as logging information
 select
    d.name       as database_name
  , replace(replace(replace(
@@ -62,8 +65,7 @@ where
    and ((@databaseFilter is null) 
       or (d.name like N'%' + @databaseFilter + N'%'))
    and (d.name <> N'tempdb')
-   AND (EXISTS(SELECT * FROM msdb.dbo.log_shipping_primary_databases AS lspd
-               WHERE lspd.primary_database = d.name))                                                   
+                                                  
 order by
    d.name;
 
@@ -148,24 +150,39 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
       primary_database = @databaseName;
    
 
-   PRINT N'print N''Starting Failover for ' + quotename(@databasename) + N' on ' + quotename(@@SERVERNAME) + N' ''at'' +  convert(nvarchar, current_timestamp, 120) + ''as'' + quotename(suser_sname()) +  N''...'';';
-   PRINT N'print N''Beginning Transaction'';';
+   PRINT N'PRINT N''Beginning Transaction'';';
    PRINT N'';
-   PRINT N'declare @retCode int';
+   PRINT N'DECLARE @retCode int';
    PRINT N'';
    PRINT N'BEGIN TRANSACTION LS1';
    PRINT N''
-   PRINT N'Go';
+   PRINT N'GO';
    PRINT N'';
-   
-   PRINT N'print N''Stopping Logshipping jobs''';
 
+   PRINT N'PRINT N''Starting Failover for ' + quotename(@databasename) + N' on ' + quotename(@@SERVERNAME) + N' at ' +  convert(nvarchar, current_timestamp, 120) + N' as ' + quotename(suser_sname()) +  N'...'';';
+
+   PRINT N'print N''Stopping Logshipping jobs on ' + quotename(@@SERVERNAME) + N''';';
    PRINT N'@retCode = exec sp_stop_job @job_id = ' + quotename(@backupJobID);
-   PRINT N'    if(@retCode == 1) '
+   PRINT N'    IF(@retCode == 1) ';
    PRINT N'       BEGIN';
-   PRINT N'          print N''Error stopping logshipping jobs'';';
-   PRINT N'          ROLLBACK WORK'
+   PRINT N'          PRINT N''Error stopping backup job'';';
+   PRINT N'          ROLLBACK TRANSACTION LS1;';
+   PRINT N'       END';
+   PRINT N'    ELSE';
+   PRINT N'       PRINT N''Backup job stopped successfully'';';
+   PRINT N'';
 
-
+   PRINT N'PRINT N''Backing up the tail of the transaction log to ' + quotename(@databasename) + N''';';
+   PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + quotename(@backupFileName) + N'''';
+   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Tail Transaction Log Backup''' + N', SKIP, NOREWIND, NOUNLOAD, NORECOVERY, STATS = 10'
+   PRINT N'    IF(@@ERROR <> 0)';
+   PRINT N'       BEGIN'
+   PRINT N'          PRINT N''Tail Transaction Log Backup Failed... Rolling back'';'
+   PRINT N'          ROLLBACK TRANSACTION LS1;';
+   PRINT N'       END'
+   PRINT N'GO'
+   PRINT N'PRINT N''Tail Transaction Log Backup Successful. ' + @databasename + N' is now in a restoring state.'';';
+   
+--End of script, continue to secondary instance script
 
 end
