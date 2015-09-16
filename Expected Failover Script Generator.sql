@@ -1,7 +1,7 @@
 /*
 
-Use this script to produce a T-SQL script to failover all of the online databases, matching filters, to the backup location specified during 
-their logshipping configurations
+Use this script to produce a T-SQL script to failover all of the online logshipped databases on current server, matching filters, to the backup location specified 
+during their logshipping configurations
 
 */
 
@@ -23,7 +23,8 @@ set @exclude_system = 1; --So system tables are excluded
 
 --================================
 --
---Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_primary_databases, which also functions as the check to make sure the db is logshipped
+--Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_primary_databases, which also functions as the check
+--to make sure the db is logshipped
 --
 
 SELECT top 1
@@ -36,27 +37,34 @@ if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\'
 declare @backup_files table (
    database_name    nvarchar(128) not null primary key clustered
  , backup_file_name nvarchar(260)
+ , standby_file_name nvarchar(260)
 );
 
 insert into @backup_files (
    database_name
  , backup_file_name
+ , standby_file_name
 )
 --Changed the format of {backupTime} to include milliseconds so it will fit the formatting of the other logshipping files
 --After some testing I found that it is in fact necessary to have the formatting this way. A .trn file that left out the seconds and milliseconds was not
 --found by the secondary copy job. A later backup with the necessary seconds and milliseconds was found, however. This may be due to the restore job using the datetime
 --as logging information
 select
-   d.name       as database_name
+   pd.primary_database      as database_name
  , replace(replace(replace(
       N'{backup_path}{database_name}_{backupTime}.trn'
     , N'{backup_path}', @backupFilePath)
-    , N'{database_name}', d.name)
+    , N'{database_name}', pd.primary_database)
     , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), current_timestamp, 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS backup_file_name
+, replace(replace(replace(
+      N'{backup_path}{database_name}_{backupTime}.ldf'
+    , N'{backup_path}', @backupFilePath)
+    , N'{database_name}', pd.primary_database)
+    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), current_timestamp, 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS standby_file_name
 from
-   sys.databases as d
+   msdb.dbo.log_shipping_primary_databases AS pd left JOIN sys.databases as d ON (pd.primary_database = d.name)
 --
---We don't want to make backups if a db is offline, a system db, not logshipped, or if it matches our filter
+--We don't want to make backups if a db is offline, a system db,  or if it matches our filter
 --
 where
    (d.state_desc = N'ONLINE')
@@ -85,6 +93,32 @@ if (@debug = 1) begin
 
 end;
 
+--@job_ids is used to stop all backup jobs on the server
+--ID is used to that the table can be stepped through later
+
+DECLARE @job_ids TABLE (
+   database_name  nvarchar(128) not null primary key clustered 
+  ,job_id uniqueidentifier NOT NULL 
+);
+
+INSERT INTO @job_ids (
+   database_name
+  ,job_id
+)
+SELECT 
+      lspd.primary_database AS database_name, lspd.backup_job_id AS job_id
+FROM
+    msdb.dbo.log_shipping_primary_databases AS lspd LEFT JOIN @backup_files AS bf ON (lspd.primary_database = bf.database_name)
+ORDER BY
+   database_name;
+
+IF (@debug = 1) BEGIN
+
+   SELECT * FROM @job_ids AS ji
+
+END;
+   
+
 --================================
 
 print N'--================================';
@@ -94,6 +128,7 @@ print N'--';
 
 declare @databaseName   nvarchar(128)
       , @backupFileName nvarchar(260)
+      , @standbyFileName nvarchar(260)
       , @maxLen         int
       , @backupJobID    uniqueidentifier;
 
@@ -122,19 +157,82 @@ print N'--';
 print N'--================================';
 
 print N'';
-print N'use [master];';
-print N'go';
+print N'USE [master];';
+print N'GO';
 
 set @databaseName = N'';
 
 declare @cmd    nvarchar(max)
       , @fileID int;
 
+
+PRINT N'DECLARE @retCode int';
+PRINT N'';
+PRINT N'PRINT N''Beginning Transaction'';';
+PRINT N'';
+PRINT N'BEGIN TRANSACTION';
+PRINT N'';
+PRINT N'PRINT N''Disabling Logshipping backup jobs on ' + quotename(@@SERVERNAME) + N''';';
+PRINT N'';
+
+--Iterate through the backup job ids and disable them
+
+WHILE EXISTS (SELECT * FROM @job_ids AS ji WHERE ji.database_name > @databaseName) BEGIN
+
+   SELECT TOP 1
+      @databaseName = ji.database_name
+    , @backupJobID = ji.job_id
+   FROM 
+      @job_ids AS ji
+   WHERE 
+      (ji.database_name > @databaseName)
+   ORDER BY
+      ji.database_name;
+   
+   PRINT N'--Make sure the jobs aren''t running to avoid issuse with premature cancelation';
+   PRINT N'';
+   PRINT N'DECLARE @job_info TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
+   PRINT N'                         last_run_date         INT              NOT NULL,';
+   PRINT N'                         last_run_time         INT              NOT NULL,';
+   PRINT N'                         next_run_date         INT              NOT NULL,';
+   PRINT N'                         next_run_time         INT              NOT NULL,';
+   PRINT N'                         next_run_schedule_id  INT              NOT NULL,';
+   PRINT N'                         requested_to_run      INT              NOT NULL, -- BOOL';
+   PRINT N'                         request_source        INT              NOT NULL,';
+   PRINT N'                         request_source_id     sysname          COLLATE database_default NULL,';
+   PRINT N'                         running               INT              NOT NULL, -- BOOL';
+   PRINT N'                         current_step          INT              NOT NULL,';
+   PRINT N'                         current_retry_attempt INT              NOT NULL,';
+   PRINT N'                         job_state             INT              NOT NULL)';
+   PRINT N'';
+   PRINT N'INSERT INTO @job_info';
+   PRINT N'EXEC xp_slqagent_enum_jobs 1, ''dbo''';
+   PRINT N'';
+   PRINT N'WHILE EXISTS (SELECT * FROM @job_info as ji WHERE ji.job_id = ' + @backupJobID + N' AND ji.running <> 0)';
+   PRINT N'BEGIN';
+   PRINT N'    WAITFOR DELAY';
+   PRINT N'END;';
+   PRINT N'';
+   PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + quotename(@backupJobID) + N', @enabled = 0';
+   PRINT N'    IF(@retCode = 1) ';
+   PRINT N'       BEGIN';
+   PRINT N'          PRINT N''Error disabling backup job with ID = ' + quotename(@backupJobID) + N''';';
+   PRINT N'          ROLLBACK TRANSACTION;';
+   PRINT N'       END;';
+   PRINT N'    ELSE';
+   PRINT N'       PRINT N''Backup jobs disabled successfully'';';
+   PRINT N'';
+
+END
+
+SET @databaseName = N'';
+
 while exists(select * from @backup_files as bf where bf.database_name > @databaseName) begin
 
    select top 1
       @databaseName = bf.database_name
     , @backupFileName = replace(bf.backup_file_name, N'''', N'''''')
+    , @standbyFileName = replace(bf.standby_file_name, N'''', N'''''')
    from
       @backup_files as bf
    where
@@ -142,47 +240,30 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    order by
       bf.database_name;
 
-   SELECT 
-      @backupJobID = backup_job_id
-   FROM
-      msdb.dbo.log_shipping_primary_databases AS lspd
-   WHERE
-      primary_database = @databaseName;
-   
-
-   PRINT N'PRINT N''Beginning Transaction'';';
-   PRINT N'';
-   PRINT N'DECLARE @retCode int';
-   PRINT N'';
-   PRINT N'BEGIN TRANSACTION LS1';
-   PRINT N''
-   PRINT N'GO';
-   PRINT N'';
 
    PRINT N'PRINT N''Starting Failover for ' + quotename(@databasename) + N' on ' + quotename(@@SERVERNAME) + N' at ' +  convert(nvarchar, current_timestamp, 120) + N' as ' + quotename(suser_sname()) +  N'...'';';
-
-   PRINT N'print N''Stopping Logshipping jobs on ' + quotename(@@SERVERNAME) + N''';';
-   PRINT N'@retCode = exec sp_stop_job @job_id = ' + quotename(@backupJobID);
-   PRINT N'    IF(@retCode == 1) ';
-   PRINT N'       BEGIN';
-   PRINT N'          PRINT N''Error stopping backup job'';';
-   PRINT N'          ROLLBACK TRANSACTION LS1;';
-   PRINT N'       END';
-   PRINT N'    ELSE';
-   PRINT N'       PRINT N''Backup job stopped successfully'';';
    PRINT N'';
-
-   PRINT N'PRINT N''Backing up the tail of the transaction log to ' + quotename(@databasename) + N''';';
+   PRINT N'PRINT N''Backing up the tail of the transaction log to ' + quotename(@backupFileName) + N''';';
+   PRINT N'';
    PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + quotename(@backupFileName) + N'''';
-   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Tail Transaction Log Backup''' + N', SKIP, NOREWIND, NOUNLOAD, NORECOVERY, STATS = 10'
+   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Tail Transaction Log Backup''' + N', SKIP, NOREWIND, NOUNLOAD';
+   PRINT N'STANDBY = ' + quotename(@standbyFileName) + N', STATS = 10';
+   PRINT N'';
    PRINT N'    IF(@@ERROR <> 0)';
    PRINT N'       BEGIN'
    PRINT N'          PRINT N''Tail Transaction Log Backup Failed... Rolling back'';'
-   PRINT N'          ROLLBACK TRANSACTION LS1;';
-   PRINT N'       END'
-   PRINT N'GO'
-   PRINT N'PRINT N''Tail Transaction Log Backup Successful. ' + @databasename + N' is now in a restoring state.'';';
+   PRINT N'          ROLLBACK TRANSACTION;';
+   PRINT N'       END;';
+   PRINT N'    ELSE';
+   PRINT N'       PRINT N''Tail Transaction Log Backup Successful. ' + quotename(@databasename) + N' is now in a restoring state.'';';
+   PRINT N'';
+   PRINT N'COMMIT TRANSACTION;';
+   PRINT N'';
+   PRINT N'GO';
+   PRINT N'';
+   
+   PRINT N'';
    
 --End of script, continue to secondary instance script
 
-end
+end;
