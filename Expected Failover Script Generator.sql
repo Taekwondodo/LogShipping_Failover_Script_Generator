@@ -97,20 +97,26 @@ end;
 --ID is used to that the table can be stepped through later
 
 DECLARE @job_ids TABLE (
-   database_name  nvarchar(128) not null primary key clustered 
-  ,job_id uniqueidentifier NOT NULL 
+   ID             int identity (1,1) NOT NULL
+  ,job_id         uniqueidentifier NOT NULL PRIMARY KEY
+  ,avg_runtime    int NOT NULL 
 );
 
-INSERT INTO @job_ids (
-   database_name
-  ,job_id
+INSERT INTO @jobs (
+  job_id
+ ,avg_runtime
 )
 SELECT 
-      lspd.primary_database AS database_name, lspd.backup_job_id AS job_id
+       lspd.backup_job_id AS job_id, AVG(sjh.run_duration) AS avg_runtime
 FROM
-    msdb.dbo.log_shipping_primary_databases AS lspd LEFT JOIN @backup_files AS bf ON (lspd.primary_database = bf.database_name)
-ORDER BY
-   database_name;
+    msdb.dbo.log_shipping_primary_databases AS lspd 
+    RIGHT JOIN @backup_files AS bf ON (lspd.primary_database = bf.database_name) --We join lspd in case we have a filter on a logshipped db
+    LEFT JOIN msdb.dbo.sysjobhistory as sjh ON (sjh.job_id = lspd.backup_job_id)
+
+WHERE sjh.step_id = 0
+   
+GROUP BY lspd.backup_job_id;
+
 
 IF (@debug = 1) BEGIN
 
@@ -160,10 +166,12 @@ print N'';
 print N'USE [master];';
 print N'GO';
 
-set @databaseName = N'';
 
 declare @cmd    nvarchar(max)
-      , @fileID int;
+      , @fileID int
+      , @idCounter int
+      , @avgRuntime int
+      , @avgRuntimeString nvarchar(8);
 
 
 PRINT N'DECLARE @retCode int';
@@ -177,19 +185,26 @@ PRINT N'';
 
 --Iterate through the backup job ids and disable them
 
-WHILE EXISTS (SELECT * FROM @job_ids AS ji WHERE ji.database_name > @databaseName) BEGIN
+set @idCounter = -1;
+
+WHILE EXISTS (SELECT * FROM @jobs AS j WHERE j.ID > @idCounter) BEGIN
 
    SELECT TOP 1
-      @databaseName = ji.database_name
-    , @backupJobID = ji.job_id
+   @idCounter = j.ID
+  ,@backupJobID = j.job_id
+  ,@avgRuntime = j.avg_runtme
    FROM 
-      @job_ids AS ji
+      @jobs AS j
    WHERE 
-      (ji.database_name > @databaseName)
-   ORDER BY
-      ji.database_name;
+      (j.ID > @idCounter);
+
+   --Convert the int avg_runtime (in seconds) to a form acceptable by WAITFOR DELAY
+   --@avgRuntime / 360 = #hours, % 24 keeps it under 24 so that it fits the datetime format. Similar behavior for hours and seconds
+
+   SET @avgRuntimeString = CAST((@avgRuntime / 360 % 24) AS nvarchar(2)) + ':' + CAST((@avgRuntime / 60 % 60) AS nvarchar(2)) + ':' + CAST((@avgRuntime % 60) AS nvarchar(2))
    
    PRINT N'--Make sure the jobs aren''t running to avoid issuse with premature cancelation';
+   PRINT N'BEGIN TRANSACTION;';
    PRINT N'';
    PRINT N'DECLARE @job_info TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
    PRINT N'                         last_run_date         INT              NOT NULL,';
@@ -208,19 +223,20 @@ WHILE EXISTS (SELECT * FROM @job_ids AS ji WHERE ji.database_name > @databaseNam
    PRINT N'INSERT INTO @job_info';
    PRINT N'EXEC xp_slqagent_enum_jobs 1, ''dbo''';
    PRINT N'';
-   PRINT N'WHILE EXISTS (SELECT * FROM @job_info as ji WHERE ji.job_id = ' + @backupJobID + N' AND ji.running <> 0)';
+   PRINT N'WHILE EXISTS (SELECT * FROM @job_info as ji WHERE ji.job_id = ' + quotename(@backupJobID) + N' AND ji.running <> 0)';
    PRINT N'BEGIN';
-   PRINT N'    WAITFOR DELAY';
+   PRINT N'    WAITFOR DELAY ' + @avgRuntimeString;
    PRINT N'END;';
    PRINT N'';
    PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + quotename(@backupJobID) + N', @enabled = 0';
    PRINT N'    IF(@retCode = 1) ';
    PRINT N'       BEGIN';
-   PRINT N'          PRINT N''Error disabling backup job with ID = ' + quotename(@backupJobID) + N''';';
+   PRINT N'          PRINT N''Error disabling job with ID = ' + quotename(@backupJobID) + N''';';
    PRINT N'          ROLLBACK TRANSACTION;';
    PRINT N'       END;';
    PRINT N'    ELSE';
    PRINT N'       PRINT N''Backup jobs disabled successfully'';';
+   PRINT N'       COMMIT TRANSACTION;';
    PRINT N'';
 
 END
