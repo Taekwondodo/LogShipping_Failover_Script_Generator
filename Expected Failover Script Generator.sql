@@ -77,6 +77,9 @@ where
 order by
    d.name;
 
+IF NOT EXISTS(SELECT * FROM @backup_files)
+   PRINT N'There are no databases configured for logshipping as a primary database';
+
 select
    @databaseFilter as DatabaseFilter
  , @backupFilePath as BackupFilePath
@@ -93,13 +96,14 @@ if (@debug = 1) begin
 
 end;
 
---@job_ids is used to stop all backup jobs on the server
+--@jobs is used to stop all backup jobs on the server
 --ID is used to that the table can be stepped through later
 
-DECLARE @job_ids TABLE (
+DECLARE @jobs TABLE (
    ID             int identity (1,1) NOT NULL
   ,job_id         uniqueidentifier NOT NULL PRIMARY KEY
-  ,avg_runtime    int NOT NULL 
+  ,job_name       nvarchar(128)
+  ,avg_runtime    int NOT NULL --HHMMSS format
 );
 
 INSERT INTO @jobs (
@@ -107,20 +111,31 @@ INSERT INTO @jobs (
  ,avg_runtime
 )
 SELECT 
-       lspd.backup_job_id AS job_id, AVG(sjh.run_duration) AS avg_runtime
+       lspd.backup_job_id AS job_id, AVG(t2.Total_Seconds) AS avg_runtime
 FROM
-    msdb.dbo.log_shipping_primary_databases AS lspd 
-    RIGHT JOIN @backup_files AS bf ON (lspd.primary_database = bf.database_name) --We join lspd in case we have a filter on a logshipped db
-    LEFT JOIN msdb.dbo.sysjobhistory as sjh ON (sjh.job_id = lspd.backup_job_id)
+    @backup_files AS bf 
+    LEFT JOIN msdb.dbo.log_shipping_primary_databases AS lspd ON (lspd.primary_database = bf.database_name) --We join to @backup_files in case we have a filter on a logshipped db
+    LEFT JOIN msdb.dbo.sysjobs AS sj ON (lspd.backup_job_id = sj.job_id) --sysjobs tells us if a job is enabled
+    RIGHT JOIN msdb.dbo.sysjobhistory AS sjh ON (sjh.job_id = lspd.backup_job_id)
+    OUTER APPLY (
+         SELECT 
+            RIGHT('000000' + CAST(sjh.run_duration AS varchar(12)), 2) AS Seconds
+           ,SUBSTRING(RIGHT('000000' + CAST(sjh.run_duration AS varchar(12)), 4), 1, 2) AS Minutes
+           ,SUBSTRING(RIGHT('000000' + CAST(sjh.run_duration AS varchar(12)), 6), 1, 2) AS Hours
+    ) as t1
+    OUTER APPLY (
+          SELECT 
+             CAST(t1.Hours AS INT) * 3600 + CAST(t1.Minutes AS INT) * 60 + CAST(t1.Seconds AS INT) AS Total_Seconds
+    )as t2
 
-WHERE sjh.step_id = 0
+WHERE sjh.step_id = 0 AND sj.enabled = 1
    
 GROUP BY lspd.backup_job_id;
 
 
 IF (@debug = 1) BEGIN
 
-   SELECT * FROM @job_ids AS ji
+   SELECT * FROM @jobs AS ji
 
 END;
    
@@ -170,20 +185,11 @@ print N'GO';
 declare @cmd    nvarchar(max)
       , @fileID int
       , @idCounter int
-      , @avgRuntime int
-      , @avgRuntimeString nvarchar(8);
-
-
-PRINT N'DECLARE @retCode int';
-PRINT N'';
-PRINT N'PRINT N''Beginning Transaction'';';
-PRINT N'';
-PRINT N'BEGIN TRANSACTION';
-PRINT N'';
-PRINT N'PRINT N''Disabling Logshipping backup jobs on ' + quotename(@@SERVERNAME) + N''';';
+      , @totalSeconds int
+      , @avgRuntime nvarchar(10);
 PRINT N'';
 
---Iterate through the backup job ids and disable them
+--Iterate through the backup job ids and generate scripts to disable them
 
 set @idCounter = -1;
 
@@ -192,20 +198,26 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE j.ID > @idCounter) BEGIN
    SELECT TOP 1
    @idCounter = j.ID
   ,@backupJobID = j.job_id
-  ,@avgRuntime = j.avg_runtme
+  ,@totalSeconds = j.avg_runtime
    FROM 
       @jobs AS j
    WHERE 
       (j.ID > @idCounter);
 
-   --Convert the int avg_runtime (in seconds) to a form acceptable by WAITFOR DELAY
-   --@avgRuntime / 360 = #hours, % 24 keeps it under 24 so that it fits the datetime format. Similar behavior for hours and seconds
+   --Convert the int avg_runtime to a datetime format acceptable by WAITFOR DELAY
 
-   SET @avgRuntimeString = CAST((@avgRuntime / 360 % 24) AS nvarchar(2)) + ':' + CAST((@avgRuntime / 60 % 60) AS nvarchar(2)) + ':' + CAST((@avgRuntime % 60) AS nvarchar(2))
+   SET @avgRuntime = N'''' + CAST((@totalSeconds / 3600) AS nvarchar(2)) + ':' + CAST((@totalSeconds / 60 % 60) AS nvarchar(2)) + ':' + CAST((@totalSeconds % 60) AS nvarchar(2)) + N''''
    
+   PRINT N'';
+   PRINT N'PRINT N''Disabling Logshipping backup job with job_id: ' + quotename(@backupJobID) + N''';';
+   PRINT N'';
    PRINT N'--Make sure the jobs aren''t running to avoid issuse with premature cancelation';
    PRINT N'BEGIN TRANSACTION;';
    PRINT N'';
+   PRINT N'--@job_info takes the result of the sp xp_slqagent_enum_jobs';
+   PRINT N'-- xp_slqagent_enum_jobs is useful as it returns the ''running'' column which is how we''ll determine if a job is running';
+   PRINT N'';
+   PRINT N'DECLARE @retCode int';
    PRINT N'DECLARE @job_info TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
    PRINT N'                         last_run_date         INT              NOT NULL,';
    PRINT N'                         last_run_time         INT              NOT NULL,';
@@ -221,21 +233,22 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE j.ID > @idCounter) BEGIN
    PRINT N'                         job_state             INT              NOT NULL)';
    PRINT N'';
    PRINT N'INSERT INTO @job_info';
-   PRINT N'EXEC xp_slqagent_enum_jobs 1, ''dbo''';
+   PRINT N'EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
    PRINT N'';
-   PRINT N'WHILE EXISTS (SELECT * FROM @job_info as ji WHERE ji.job_id = ' + quotename(@backupJobID) + N' AND ji.running <> 0)';
+   PRINT N'WHILE EXISTS (SELECT * FROM @job_info as ji WHERE ji.job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N' AND ji.running <> 0)';
    PRINT N'BEGIN';
-   PRINT N'    WAITFOR DELAY ' + @avgRuntimeString;
+   PRINT N'    PRINT N''Waiting ' + @avgRuntime + N'for job to finish running' + N''';';
+   PRINT N'    WAITFOR DELAY ' + @avgRuntime;
    PRINT N'END;';
    PRINT N'';
-   PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + quotename(@backupJobID) + N', @enabled = 0';
+   PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N', @enabled = 0';
    PRINT N'    IF(@retCode = 1) ';
    PRINT N'       BEGIN';
    PRINT N'          PRINT N''Error disabling job with ID = ' + quotename(@backupJobID) + N''';';
    PRINT N'          ROLLBACK TRANSACTION;';
    PRINT N'       END;';
    PRINT N'    ELSE';
-   PRINT N'       PRINT N''Backup jobs disabled successfully'';';
+   PRINT N'       PRINT N''Backup job disabled successfully'';';
    PRINT N'       COMMIT TRANSACTION;';
    PRINT N'';
 
@@ -261,23 +274,19 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'';
    PRINT N'PRINT N''Backing up the tail of the transaction log to ' + quotename(@backupFileName) + N''';';
    PRINT N'';
-   PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + quotename(@backupFileName) + N'''';
-   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Tail Transaction Log Backup''' + N', SKIP, NOREWIND, NOUNLOAD';
-   PRINT N'STANDBY = ' + quotename(@standbyFileName) + N', STATS = 10';
+   PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + REPLACE(REPLACE(quotename(@backupFileName), N'[',N''), N']', N'')  + N'''';
+   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Tail Transaction Log Backup''' + N', SKIP, NOREWIND, NOUNLOAD,';
+   PRINT N'STANDBY = N''' + REPLACE(REPLACE(quotename(@standbyFileName), N'[',N''), N']', N'') + N''', STATS = 10';
    PRINT N'';
    PRINT N'    IF(@@ERROR <> 0)';
    PRINT N'       BEGIN'
-   PRINT N'          PRINT N''Tail Transaction Log Backup Failed... Rolling back'';'
-   PRINT N'          ROLLBACK TRANSACTION;';
+   PRINT N'          PRINT N''Tail Transaction Log Backup encountered error: '' + @@ERROR;';
    PRINT N'       END;';
    PRINT N'    ELSE';
-   PRINT N'       PRINT N''Tail Transaction Log Backup Successful. ' + quotename(@databasename) + N' is now in a restoring state.'';';
-   PRINT N'';
-   PRINT N'COMMIT TRANSACTION;';
+   PRINT N'       PRINT N''Tail Transaction Log Backup Successful. ' + quotename(@databasename) + N' is now in a Standby/Read-Only state.'';';
    PRINT N'';
    PRINT N'GO';
    PRINT N'';
-   
    PRINT N'';
    
 --End of script, continue to secondary instance script
