@@ -55,12 +55,12 @@ select
       N'{backup_path}{database_name}_{backupTime}.trn'
     , N'{backup_path}', @backupFilePath)
     , N'{database_name}', pd.primary_database)
-    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), current_timestamp, 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS backup_file_name
+    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), GETUTCDATE(), 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS backup_file_name
 , replace(replace(replace(
       N'{backup_path}{database_name}_{backupTime}.ldf'
     , N'{backup_path}', @backupFilePath)
     , N'{database_name}', pd.primary_database)
-    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), current_timestamp, 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS standby_file_name
+    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), GETUTCDATE(), 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS standby_file_name
 from
    msdb.dbo.log_shipping_primary_databases AS pd left JOIN sys.databases as d ON (pd.primary_database = d.name)
 --
@@ -197,7 +197,6 @@ WHILE EXISTS(SELECT * FROM @jobs AS j WHERE j.job_name > @jobName) BEGIN
 END;
 
 print N'--';
-
 print N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
 print N'--';
 print N'--================================';
@@ -268,6 +267,7 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'    PRINT N''Waiting ' + @avgRuntime + N' for job to finish running' + N''';';
    PRINT N'    WAITFOR DELAY ' + N'''' + @avgRuntime + N'''';
    PRINT N'';
+   PRINT N'    DELETE FROM @job_info';
    PRINT N'    INSERT INTO @job_info';
    PRINT N'    EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
    PRINT N'END;';
@@ -315,8 +315,8 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + REPLACE(REPLACE(quotename(@backupFileName), N'[',N''), N']', N'')  + N'''';
-   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Tail Transaction Log Backup''' + N', SKIP, NOREWIND, NOUNLOAD,';
-   PRINT N'STANDBY = N''' + REPLACE(REPLACE(quotename(@standbyFileName), N'[',N''), N']', N'') + N''', STATS = 10';
+   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Transaction Log Tail Backup''' + N', ';
+   PRINT N'SKIP, NOREWIND, NOUNLOAD, STANDBY = N''' + REPLACE(REPLACE(quotename(@standbyFileName), N'[',N''), N']', N'') + N''', STATS = 10';
    PRINT N'';
    PRINT N'PRINT N'''';';
    PRINT N'PRINT N''If the log backup was successful,  ' + quotename(@databasename) + N' is now in a Standby/Read-Only state.'';';

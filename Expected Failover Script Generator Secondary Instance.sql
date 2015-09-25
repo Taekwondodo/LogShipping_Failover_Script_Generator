@@ -1,7 +1,6 @@
 /*
 
-Use this script to produce a T-SQL script to failover all of the online logshipped databases on current server, matching filters, to the backup location specified 
-during their logshipping configurations
+Use this script to produce a T-SQL script to run on the secondary instances of a logshipping configuration to complete the failover
 
 */
 
@@ -140,12 +139,15 @@ END;
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Use the following script to set up logshipping and disable secondary instance jobs on ' + quotename(@@servername) + ':';
+PRINT N'-- Use the following script to failover to the following databases, disabling their secondary instance jobs on ' + quotename(@@servername) + ':';
 PRINT N'--';
 
 DECLARE @databaseName     nvarchar(128)
+       ,@secondaryID      uniqueidentifier
        ,@copyJobName      nvarchar(128)
        ,@restoreJobName   nvarchar(128)
+       ,@copyID           uniqueidentifier  
+       ,@restoreID        uniqueidentifier    
        ,@maxlenDB         int
        ,@maxlenJob        int
 
@@ -168,7 +170,67 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    ORDER BY d.database_name ASC;
 
-   PRINT LEFT(@databaseName + REPLICATE(N' ', @maxlenDB / 2), @maxlenDB / 2) + N'    ' + LEFT(@copyJobName + REPLICATE(N' ', @maxlenJob / 2), @maxlenJob / 2) + N'    ' + @restoreJobName ;
+   PRINT N'--' + LEFT(@databaseName + REPLICATE(N' ', @maxlenDB / 2), @maxlenDB / 2) + N'    ' + LEFT(@copyJobName + REPLICATE(N' ', @maxlenJob / 2), @maxlenJob / 2) + N'    ' + @restoreJobName ;
 
 END;     
+
+PRINT N'--';
+PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'--================================';
+PRINT N'';
+
+PRINT N'USE master';
+PRINT N'';
+PRINT N'GO';
+PRINT N'';
+PRINT N'--Run copy and restore jobs to assure the transaction log tail backup from the failover is applied';
+PRINT N'';
+PRINT N'PRINT N''Bringing the secondary databases online'';';
+PRINT N'';
+PRINT N'DECLARE @retcode int';
+PRINT N'       ,@lastCopiedFile nvarchar(500)';
+PRINT N'       ,@lastRestoredFile nvarchar(500);';
+PRINT N'';
+PRINT N'BEGIN TRANSACTION';
+PRINT N'';
+
+set @databaseName = N'';
+
+WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
+
+   SELECT TOP 1
+      @databaseName = d.database_name 
+     ,@secondaryID = d.secondary_id
+     ,@copyJobName = j.job_name     --remove the names if you don't end up using them
+     ,@restoreJobName = j2.job_name 
+     ,@copyID = d.copy_job_id 
+     ,@restoreID  = d.restore_job_id   
+   FROM
+      @databases AS d LEFT JOIN @jobs AS j ON (d.copy_job_id = j.job_id)
+      LEFT JOIN @jobs as j2 ON(d.restore_job_id = j2.job_id)
+
+   WHERE 
+      d.database_name > @databaseName
+
+   ORDER BY d.database_name ASC;
+
+   PRINT N'EXEC @retcode = msdb.dbo.sp_start_job @job_id = ''' + @copyID + N'''';
+   PRINT N'    IF (@retcode <> 0) BEGIN';
+   PRINT N'       PRINT N''Error running ' + quotename(@copyJobName) + N'... Rolling back'';';
+   PRINT N'       ROLLBACK TRANSACTION;'
+   PRINT N'    END';
+   PRINT N'';
+   PRINT N'SELECT';
+   PRINT N'    @lastCopiedFile = lss.last_copied_file';
+   PRINT N'FROM';
+   PRINT N'    msdb.dbo.log_shipping_secondary AS lss';
+   PRINT N'WHERE';
+   PRINT N'    lss.secondary_id = ' + N'''' + @secondaryID + N'''';
+   PRINT N'';
+   --Check to make sure the transaction log tail was copied over
+   PRINT N'IF '
+
+
+END
+
 
