@@ -153,7 +153,9 @@ declare @databaseName   nvarchar(128)
       , @standbyFileName nvarchar(260)
       , @maxLen         int
       , @backupJobID    uniqueidentifier
-      , @jobName        nvarchar(128);
+      , @jobName        nvarchar(128)
+      , @totalSeconds   int
+      , @avgRuntime     nvarchar(8);
 
 set @maxLen = (select max(datalength(bf.database_name)) from @backup_files as bf);
 set @databaseName = N'';
@@ -204,13 +206,26 @@ print N'--================================';
 print N'';
 print N'USE [master];';
 print N'GO';
-
-
-declare @cmd            nvarchar(max)
-      , @fileID         int
-      , @totalSeconds   int
-      , @avgRuntime     nvarchar(8);
 PRINT N'';
+PRINT N'--@job_info takes the result of the sp xp_slqagent_enum_jobs';
+PRINT N'-- xp_slqagent_enum_jobs is useful as it returns the ''running'' column which is how we''ll determine if a job is running';
+PRINT N'';
+PRINT N'DECLARE @retCode int';
+PRINT N'DECLARE @job_info TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
+PRINT N'                         last_run_date         INT              NOT NULL,';
+PRINT N'                         last_run_time         INT              NOT NULL,';
+PRINT N'                         next_run_date         INT              NOT NULL,';
+PRINT N'                         next_run_time         INT              NOT NULL,';
+PRINT N'                         next_run_schedule_id  INT              NOT NULL,';
+PRINT N'                         requested_to_run      INT              NOT NULL, -- BOOL';
+PRINT N'                         request_source        INT              NOT NULL,';
+PRINT N'                         request_source_id     sysname          COLLATE database_default NULL,';
+PRINT N'                         running               INT              NOT NULL, -- BOOL';
+PRINT N'                         current_step          INT              NOT NULL,';
+PRINT N'                         current_retry_attempt INT              NOT NULL,';
+PRINT N'                         job_state             INT              NOT NULL)';
+PRINT N'';
+PRINT N'BEGIN TRANSACTION;';
 
 --Iterate through the backup job ids and generate scripts to disable them
 
@@ -237,27 +252,8 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'PRINT N''================================'';';
    PRINT N'PRINT N''Disabling Logshipping backup job ' + quotename(@jobName) + N''';';
    PRINT N'';
-   PRINT N'BEGIN TRANSACTION;';
    PRINT N'';
    PRINT N'--We Make sure the jobs aren''t running to avoid issuse with premature cancelation';
-   PRINT N'';
-   PRINT N'--@job_info takes the result of the sp xp_slqagent_enum_jobs';
-   PRINT N'-- xp_slqagent_enum_jobs is useful as it returns the ''running'' column which is how we''ll determine if a job is running';
-   PRINT N'';
-   PRINT N'DECLARE @retCode int';
-   PRINT N'DECLARE @job_info TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
-   PRINT N'                         last_run_date         INT              NOT NULL,';
-   PRINT N'                         last_run_time         INT              NOT NULL,';
-   PRINT N'                         next_run_date         INT              NOT NULL,';
-   PRINT N'                         next_run_time         INT              NOT NULL,';
-   PRINT N'                         next_run_schedule_id  INT              NOT NULL,';
-   PRINT N'                         requested_to_run      INT              NOT NULL, -- BOOL';
-   PRINT N'                         request_source        INT              NOT NULL,';
-   PRINT N'                         request_source_id     sysname          COLLATE database_default NULL,';
-   PRINT N'                         running               INT              NOT NULL, -- BOOL';
-   PRINT N'                         current_step          INT              NOT NULL,';
-   PRINT N'                         current_retry_attempt INT              NOT NULL,';
-   PRINT N'                         job_state             INT              NOT NULL)';
    PRINT N'';
    PRINT N'INSERT INTO @job_info';
    PRINT N'EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
@@ -281,13 +277,11 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'    ELSE';
    PRINT N'       PRINT N''Backup job disabled successfully'';';
    PRINT N'       PRINT N'''';';
-   PRINT N'       COMMIT TRANSACTION;';
-   PRINT N'';
    PRINT N'GO';
    PRINT N'';
 
 END
-
+PRINT N'COMMIT TRANSACTION;';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N''Starting failovers'';';
