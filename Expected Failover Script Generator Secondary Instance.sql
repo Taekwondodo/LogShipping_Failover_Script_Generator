@@ -24,12 +24,6 @@ set @exclude_system = 1; --So system tables are excluded
 --
 --Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_secondary_databases
 --
-/*
-SELECT top 1
-   @backupFilePath = backup_directory
-FROM msdb.dbo.log_shipping_primary_databases
-;
-
 
 if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\';
 */
