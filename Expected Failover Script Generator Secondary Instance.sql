@@ -22,8 +22,7 @@ set @exclude_system = 1; --So system tables are excluded
 
 --================================
 --
---Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_primary_databases, which also functions as the check
---to make sure the db is logshipped
+--Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_secondary_databases
 --
 /*
 SELECT top 1
@@ -34,8 +33,6 @@ FROM msdb.dbo.log_shipping_primary_databases
 
 if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\';
 */
-
---secondary_id necessary to pair databases to their jobs
 
 declare @databases table (
    secondary_id     uniqueidentifier not null primary key
@@ -147,12 +144,14 @@ DECLARE @databaseName     nvarchar(128)
        ,@secondaryID      uniqueidentifier
        ,@copyJobName      nvarchar(128)
        ,@restoreJobName   nvarchar(128)
-       ,@copyID           uniqueidentifier  
+       ,@copyID           uniqueidentifier
+       ,@tailBackupName   nvarchar(128) --Used to ensure that the copy/restore jobs successfully apply the transaction log tail backup to their respective databases 
        ,@restoreID        uniqueidentifier    
        ,@maxlenDB         int
        ,@maxlenJob        int
 
 SET @databaseName = N'';
+SET @tailBackupName = N'%Transaction Log Tail Backup';
 SET @maxlenDB = (select max(datalength(j.target_database)) from @jobs as j);
 SET @maxlenJob = (select max(datalength(j.job_name)) from @jobs as j);
 
@@ -314,6 +313,9 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'    EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
    PRINT N'END;';
    PRINT N'';
+
+   --Attempting to disable a job that is already disabled is not an issue
+
    PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_name = ''' + @jobName + N''', @enabled = 0';
    PRINT N'    IF(@retCode = 1) ';
    PRINT N'       BEGIN';
@@ -324,9 +326,11 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'       PRINT N''Job disabled successfully'';';
    PRINT N'       PRINT N'''';';
 END
-    PRINT N'COMMIT TRANSACTION;';
-    PRINT N'';
-    PRINT N'PRINT N''Running databases'''' secondary jobs to ensure their respective transaction log tail backups are applied...'';';
+
+PRINT N'';
+PRINT N'COMMIT TRANSACTION;';
+PRINT N'';
+PRINT N'PRINT N''Running databases'''' secondary jobs to ensure their respective transaction log tail backups are applied...'';';
 
 set @databaseName = N'';
 
@@ -351,7 +355,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    ORDER BY d.database_name ASC;
 
    --Check to make sure the transaction log tail was copied over
-   PRINT N'PRINT N''Running jobs for ' + @databaseName + N'. Starting copy job...'';';
+   PRINT N'PRINT N''Running jobs for ' + quotename(@databaseName) + N'. Starting copy job...'';';
    PRINT N'';
    PRINT N'BEGIN TRANSACTION;';
    PRINT N'';
@@ -363,7 +367,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'';
    PRINT N'--Check to make sure the transaction log tail backup was copied';
    PRINT N'';
-   PRINT N'IF(EXISTS(SELECT * FROM @backupInfo AS bi WHERE bi.backupName LIKE ''%Transaction Log Tail Backup''))BEGIN';
+   PRINT N'IF(EXISTS(SELECT * FROM @backupInfo AS bi WHERE bi.backupName LIKE ''' + @tailBackupName + N'''))BEGIN';
    PRINT N'    PRINT N''Copy job successfully copied the Transaction Log Tail Backup. Starting restore job...'';';
    PRINT N'ELSE';
    PRINT N'    PRINT N''' + quotename(@copyJobName) + N' did not copy over the Transaction Log Tail Backup. Check to make sure the file name follows the same format'';';
@@ -379,6 +383,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'       ROLLBACK TRANSACTION;';
    PRINT N'    END';
    PRINT N'';
+   --Check to make sure the transaction log tail backup was restored
    PRINT N'--Make sure the Transaction Log Tail Backup was restored'
    PRINT N'IF (EXISTS(';
    PRINT N'       SELECT TOP 1';
@@ -386,7 +391,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'          msdb.dbo.backupset AS b';
    PRINT N'       WHERE';
    PRINT N'          b.database_name = ''' + @databaseName + N''''; 
-   PRINT N'          AND b.name LIKE ''%Transaction Log Tail Backup'''; 
+   PRINT N'          AND b.name LIKE ''' + @tailBackupName + N''''; 
    PRINT N'       ORDER BY';
    PRINT N'          backup_set_id DESC';
    PRINT N'       )';
@@ -394,18 +399,21 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'    PRINT N''Transaction Log Tail Backup successfully restored.'';';
    PRINT N'    COMMIT TRANSACTION;';
    PRINT N'ELSE';
-   PRINT N'    PRINT N''' + @restoreJobName + N' did not restore the Transaction Log Tail Backup. Rolling back...''';
+   PRINT N'    PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...''';
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'END';
    PRINT N''
-   PRINT N'PRINT N''Bringing ' + @databaseName + N' online'';';
+   PRINT N'PRINT N''Bringing ' + quotename(@databaseName) + N' online'';';
    PRINT N'';
    PRINT N'--Bring the database online. If the restore fails quit execution with error';
    PRINT N'';
-   PRINT N'RESTORE DATABASE [' + @databaseName + N'] WITH RECOVERY;';
+   PRINT N'RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;';
    PRINT N'    IF(@@ERROR <> 0) BEGIN';
    PRINT N'       raiserror(''Restore operation failed'', 20, -1) with log';
    PRINT N'    END;';
+   PRINT N'';
 END
+
+PRINT N'PRINT N''Failover to ' + quotename(@@SERVERNAME) + N' complete'';';
 
 
