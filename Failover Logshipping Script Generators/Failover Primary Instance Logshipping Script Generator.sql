@@ -1,6 +1,6 @@
 /*
 
-Use this script to produce a T-SQL script to run on the secondary instances of a logshipping configuration to complete the failover
+Use this script to produce a T-SQL script to run on the secondary instance you're failing over to to configure it as a primary instance for the server you're failover over from
 
 */
 
@@ -22,15 +22,11 @@ set @exclude_system = 1; --So system tables are excluded
 
 --================================
 --
---Instead of using the registry to find the backup we'll use msdb.dbo.log_shipping_secondary_databases
---
---We keep the job ids to ensure they're disabled before configuring logshipping
-
 declare @databases table (
    secondary_id     uniqueidentifier not null primary key
-  ,database_name    nvarchar(128) not null 
-
+  ,database_name    nvarchar(128) not nul
 );
+
 insert into @databases (
    database_name
   ,secondary_id
@@ -40,14 +36,13 @@ select
 from
    msdb.dbo.log_shipping_secondary_databases AS lssd 
    LEFT JOIN sys.databases AS d ON (lssd.secondary_database = d.name)
---LEFT JOIN msdb.dbo.log_shipping_secondary AS lss  ON (lssd.secondary_id = lss.secondary_id)
 --
 --We don't want a db if it is offline, not yet restored, or if it matches our filter
 --
 where
    (d.state_desc = N'ONLINE')
    AND d.is_read_only = 0 
-   AND d.is_in_stanby = 0
+   AND d.is_in_standby = 0
    and ((@databaseFilter is null) 
       or (d.name like N'%' + @databaseFilter + N'%'))
                                                   
@@ -55,11 +50,10 @@ order by
    lssd.secondary_database;
 
 IF NOT EXISTS(SELECT * FROM @databases)
-   raiserror('There are no databases eligible to be configured for logshipping, 20, -1');
+   raiserror('There are no databases eligible to be configured for logshipping', 20, -1);
 
 select
    @databaseFilter as DatabaseFilter
- , @backupFilePath as BackupFilePath
  , @exclude_system as ExcludeSystemDatabases;
 
 if (@debug = 1) begin
@@ -77,7 +71,7 @@ end;
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Use the following script to configure failover logshipping for the following databases on ' + quotename(@@servername) + ':';
+PRINT N'-- Use the following script to configure failover logshipping for the following databases as primaries on ' + quotename(@@servername) + ':';
 PRINT N'--';
 
 DECLARE @databaseName nvarchar(128)
@@ -95,7 +89,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    ORDER BY d.database_name ASC;
 
-   PRINT N'--' + @databaseName;
+   PRINT N'-- ' + @databaseName;
 
 END;     
 
@@ -103,8 +97,11 @@ PRINT N'--';
 PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
 PRINT N'--================================';
 PRINT N'';
-PRINT N'PRINT N''Beginning Logshipping Configurations...'
+PRINT N'PRINT N''Beginning Logshipping Configurations...'';';
 PRINT N'PRINT N'''';';
+PRINT N'';
+PRINT N'BEGIN TRANSACTION;'
+PRINT N'';
 
 --
 --End of setup, start logshipping 
@@ -113,8 +110,10 @@ DECLARE @backupPath           nvarchar(260)
        ,@monitorServer        nvarchar(128)
        ,@secondaryServer      nvarchar(128)
        ,@secondaryDatabase    nvarchar(128)
+       ,@currentDate          nvarchar(8) --Needs to be YYYYMMHH format 
 
 SET @databaseName = N'';
+SET @currentDate = convert(nvarchar(8), CURRENT_TIMESTAMP, 112); --YYYYMMHH
 
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName))BEGIN
 
@@ -125,7 +124,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
      ,@secondaryServer = lss.primary_server
      ,@secondaryDatabase = lss.primary_database
    FROM
-      @databases AS d LEFT JOIN log_shipping_secondary AS lss ON (d.secondary_id = lss.secondary_id)
+      @databases AS d LEFT JOIN msdb.dbo.log_shipping_secondary AS lss ON (d.secondary_id = lss.secondary_id)
    ORDER BY
       d.database_name ASC;     
   
@@ -157,45 +156,55 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'';
    PRINT N'IF (@@ERROR = 0 AND @SP_Add_RetCode = 0)';
    PRINT N'BEGIN';
+   PRINT N'';
+   PRINT N'DECLARE @LS_BackUpScheduleUID	AS uniqueidentifier';
+   PRINT N'DECLARE @LS_BackUpScheduleID	     AS int';
+   PRINT N'';
+   PRINT N'';
+   PRINT N'EXEC msdb.dbo.sp_add_schedule';
+   PRINT N'		   @schedule_name =N''LSBackupSchedule_' + lower(@@SERVERNAME) + N'1' + N''''; --The 1 is kept from the original configuration
+   PRINT N'		   ,@enabled = 1';
+   PRINT N'		   ,@freq_type = 4';
+   PRINT N'		   ,@freq_interval = 1';
+   PRINT N'		   ,@freq_subday_type = 4';
+   PRINT N'		   ,@freq_subday_interval = 15';
+   PRINT N'		   ,@freq_recurrence_factor = 0';
+   PRINT N'		   ,@active_start_date = ' + @currentDate; 
+   PRINT N'		   ,@active_end_date = 99991231';
+   PRINT N'		   ,@active_start_time = 0';
+   PRINT N'		   ,@active_end_time = 235900';
+   PRINT N'		   ,@schedule_uid = @LS_BackUpScheduleUID OUTPUT';
+   PRINT N'		   ,@schedule_id = @LS_BackUpScheduleID OUTPUT';
+   PRINT N'';
+   PRINT N'EXEC msdb.dbo.sp_attach_schedule';
+   PRINT N'		   @job_id = @LS_BackupJobId';
+   PRINT N'		   ,@schedule_id = @LS_BackUpScheduleID';
+   PRINT N'';
+   PRINT N'EXEC msdb.dbo.sp_update_job'; 
+   PRINT N'		   @job_id = @LS_BackupJobId';
+   PRINT N'		   ,@enabled = 1';
+   PRINT N'';
+   PRINT N'';
+   PRINT N'ELSE';
+   PRINT N'    ROLLBACK TRANSACTION';
+   PRINT N'END'; 
+   PRINT N'';
+   PRINT N'';
+   PRINT N'EXEC master.dbo.sp_add_log_shipping_primary_secondary';
+   PRINT N'		   @primary_database = N''' + @databaseName + N'''';
+   PRINT N'		   ,@secondary_server = N''' + @secondaryServer + N''''; 
+   PRINT N'		   ,@secondary_database = N''' + @secondaryDatabase + N'''';
+   PRINT N'		   ,@overwrite = 1';
+   PRINT N'';
 
-   DECLARE @LS_BackUpScheduleUID	As uniqueidentifier 
-   DECLARE @LS_BackUpScheduleID	AS int 
+END;
+
+PRINT N'';
+PRINT N'COMMIT TRANSACTION;';
+-- ****** End: Script to be run at Failover Primary ******
+
+ 
 
 
-   EXEC msdb.dbo.sp_add_schedule 
-		   @schedule_name =N'LSBackupSchedule_sql-logship-s1' 
-		   ,@enabled = 1 
-		   ,@freq_type = 4 
-		   ,@freq_interval = 1 
-		   ,@freq_subday_type = 4 
-		   ,@freq_subday_interval = 15 
-		   ,@freq_recurrence_factor = 0 
-		   ,@active_start_date = 20151002 --change to current date when script is rrun
-		   ,@active_end_date = 99991231 
-		   ,@active_start_time = 0 
-		   ,@active_end_time = 235900 
-		   ,@schedule_uid = @LS_BackUpScheduleUID OUTPUT 
-		   ,@schedule_id = @LS_BackUpScheduleID OUTPUT 
-
-   EXEC msdb.dbo.sp_attach_schedule 
-		   @job_id = @LS_BackupJobId 
-		   ,@schedule_id = @LS_BackUpScheduleID  
-
-   EXEC msdb.dbo.sp_update_job 
-		   @job_id = @LS_BackupJobId 
-		   ,@enabled = 1 
-
-
-   END 
-
-
-   EXEC master.dbo.sp_add_log_shipping_primary_secondary 
-		   @primary_database = N'Test' 
-		   ,@secondary_server = N'sql-logship-p' 
-		   ,@secondary_database = N'Test' 
-		   ,@overwrite = 1 
-
-END
--- ****** End: Script to be run at Primary: [sql-logship-s]  ******
 
 
