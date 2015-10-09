@@ -1,9 +1,11 @@
 /*
 
 Use this script to produce a T-SQL script to run on the primary instance you're failing over 
-from to configure it as a secondary instance for the server you're failover over to
+from to configure it as a secondary instance for the server you're failing over to
 
 */
+
+--We won't be able to fully run this script until the secondary instance is set up as a primary instance
 
 set nocount on;
 go
@@ -25,23 +27,26 @@ set @exclude_system = 1; --So system tables are excluded
 --
 
 declare @databases table (
-  ,database_name    nvarchar(128) not null 
-
+  database_name            nvarchar(128) not null 
+ ,backup_source_path       nvarchar(500) not null
+ ,backup_destination_path  nvarchar(500) not null
 );
 insert into @databases (
    database_name
+  ,backup_source_path
+  ,backup_destination_path
 )
 select
-   lsps.secondary_database AS database_name
+   lsps.secondary_database AS database_name, lss.backup_source_directory AS backup_source_path, lss.backup_destination_directory AS backup_destination_path
 from
-    msdb.dbo.log_shipping_primary_secondaries AS lsps 
+    msdb.dbo.log_shipping_primary_secondaries AS lsps LEFT JOIN msdb.dbo.log_shipping_secondary AS lss ON (lsps.secondary_database = lss.primary_database)
 
 --The join we usually do to sys.databases here to check if the db is online and such will have to be done within the outputted script since this is being ran
 --on the primary instance where there isn't access to the state of the secondary instance's databases
 
 where
     ((@databaseFilter is null) 
-      or (d.name like N'%' + @databaseFilter + N'%'))
+      or (lsps.secondary_database like N'%' + @databaseFilter + N'%'))
                                                   
 order by
    lsps.secondary_database;
@@ -64,21 +69,43 @@ if (@debug = 1) begin
 
 end;
 
+DECLARE @jobInfo AS TABLE(
+        @
+)
+
+DECLARE @databaseName               nvarchar(128)
+       ,@backupSourcePath           nvarchar(500)
+       ,@backupDestinationPath      nvarchar(500)
+       ,@secondaryServer            nvarchar(128) --Since this script is ran on the primary, we can't use @@SERVERNAME to get the name of the secondary 
+       ,@monitorServer              nvarchar(128)
+       ,@maxDatabaseLen             int
+       ,@maxPathLen                 int
+
+SET @databaseName = N'';
+SET @maxDatabaseLen = (SELECT MAX(datalength(d.database_name)) FROM @databases AS d);
+SET @maxPathLen = (SELECT MAX(datalength(d.backup_source_path)) FROM @databases as d);
+
+SELECT TOP 1
+   @secondaryServer = lss.primary_server
+  ,@monitorServer = lss.monitor_server
+FROM 
+   msdb.dbo.log_shipping_secondary AS lss;
+
+
 --================================
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Use the following script to configure failover logshipping for the following databases as secondaries on ' + quotename(@@servername) + ':';
+PRINT N'-- Use the following script to configure failover logshipping for the following databases as secondaries on ' + @secondaryServer + ' with backup source and destination paths:';
 PRINT N'--';
 
-DECLARE @databaseName nvarchar(128)
-
-SET @databaseName = N'';
 
 WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
 
    SELECT TOP 1
       @databaseName = d.database_name 
+     ,@backupSourcePath = d.backup_source_path
+     ,@backupDestinationPath = d.backup_destination_path
    FROM
       @databases AS d 
    WHERE 
@@ -86,7 +113,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    ORDER BY d.database_name ASC;
 
-   PRINT N'-- ' + @databaseName;
+   PRINT N'--   ' + LEFT((@databaseName + replicate(' ', @maxDatabaseLen / 2)), @maxDatabaseLen / 2) + LEFT((@backupSourcePath + replicate(' ', @maxPathLen / 2)), @maxPathLen / 2) + @backupDestinationPath  ;
 
 END;     
 
@@ -102,123 +129,131 @@ PRINT N'';
 --End of setup, start logshipping 
 --
 
-DECLARE @databaseName               nvarchar(128)
-       ,@primaryDatabase            nvarchar(128)
-       ,@backupSourcePath           nvarchar(260)
-       ,@backupDestinationPath      nvarchar(260)
-       ,@currentDate                nvarchar(8) --Needs to be YYYYMMHH format 
-
+DECLARE @primaryDatabase            nvarchar(128)
+   
 SET @databaseName = N'';
-SET @currentDate = convert(nvarchar(8), CURRENT_TIMESTAMP, 112); --YYYYMMHH
 
-WHILE(EXISTS(SELECT * FROM 
+WHILE(EXISTS(SELECT * FROM @databases as d. WHERE @databaseName > d.database_name ORDER BY d.database_name ASC))BEGIN
 
-DECLARE @LS_Secondary__CopyJobId	AS uniqueidentifier 
-DECLARE @LS_Secondary__RestoreJobId	AS uniqueidentifier 
-DECLARE @LS_Secondary__SecondaryId	AS uniqueidentifier 
-DECLARE @LS_Add_RetCode	As int 
-
-
-EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary 
-		@primary_server = N'sql-logship-s' 
-		,@primary_database = N'Test' 
-		,@backup_source_directory = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups' 
-		,@backup_destination_directory = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups\Secondary (Copy Job)' 
-		,@copy_job_name = N'LSCopy_sql-logship-s_Test' 
-		,@restore_job_name = N'LSRestore_sql-logship-s_Test' 
-		,@file_retention_period = 4320 
-		,@monitor_server = N'P003666-DT' 
-		,@monitor_server_security_mode = 1 
-		,@overwrite = 1 
-		,@copy_job_id = @LS_Secondary__CopyJobId OUTPUT 
-		,@restore_job_id = @LS_Secondary__RestoreJobId OUTPUT 
-		,@secondary_id = @LS_Secondary__SecondaryId OUTPUT 
-
-IF (@@ERROR = 0 AND @LS_Add_RetCode = 0) 
-BEGIN 
-
-DECLARE @LS_SecondaryCopyJobScheduleUID	As uniqueidentifier 
-DECLARE @LS_SecondaryCopyJobScheduleID	AS int 
+   SELECT TOP 1
+       @databaseName = d.database_name
+      ,@backupSourcePath = d.backup_source_path
+      ,@backupDestinationPath = d.backup_destination_path
+      ,@primaryDatabase = lspd.primary_database
+   FROM
+      @databases AS d LEFT JOIN msdb.dbo.log_shipping_primary_databases AS lspd ON (d.database_name = lspd.primary_database)
+   WHERE 
+      @databaseName > d.database_name
+   ORDER BY
+      d.database_name ASC;
 
 
-EXEC msdb.dbo.sp_add_schedule 
-		@schedule_name =N'DefaultCopyJobSchedule' 
-		,@enabled = 1 
-		,@freq_type = 4 
-		,@freq_interval = 1 
-		,@freq_subday_type = 4 
-		,@freq_subday_interval = 15 
-		,@freq_recurrence_factor = 0 
-		,@active_start_date = 20151002 
-		,@active_end_date = 99991231 
-		,@active_start_time = 0 
-		,@active_end_time = 235900 
-		,@schedule_uid = @LS_SecondaryCopyJobScheduleUID OUTPUT 
-		,@schedule_id = @LS_SecondaryCopyJobScheduleID OUTPUT 
+   PRINT N'DECLARE @LS_Secondary__CopyJobId	AS uniqueidentifier';
+   PRINT N'DECLARE @LS_Secondary__RestoreJobId	AS uniqueidentifier'; 
+   PRINT N'DECLARE @LS_Secondary__SecondaryId	AS uniqueidentifier'; 
+   PRINT N'DECLARE @LS_Add_RetCode	               As int'; 
+   PRINT N'DECLARE @currentDate                   AS nvarchar(8)';
+   PRINT N'';
+   PRINT N'SET @currentDate = convert(nvarchar(8), CURRENT_TIMESTAMP, 112); --YYYYMMHH';
+   PRINT N'';
+   PRINT N'EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary'; 
+   PRINT N'         @primary_server = N''' + @@SERVERNAME + N'''';  
+   PRINT N'        ,@primary_database = N''' + @primaryDatabase + N'''';
+   PRINT N'        ,@backup_source_directory = N''' + @backupSourcePath + N'''';
+   PRINT N'        ,@backup_destination_directory = N''' + @backupDestinationPath + N''''; 
+   PRINT N'        ,@copy_job_name = N''LSCopy_' + @secondaryServer + N'_' + @database + N''''; 
+   PRINT N'        ,@restore_job_name = N''LSRestore_' + @secondaryServer + N'_' + @database + N''''; 
+   PRINT N'        ,@file_retention_period = 4320';
+   PRINT N'        ,@monitor_server = N''' + @monitorServer + N'''';
+   PRINT N'        ,@monitor_server_security_mode = 1';
+   PRINT N'        ,@overwrite = 1';
+   PRINT N'        ,@copy_job_id = @LS_Secondary__CopyJobId OUTPUT';
+   PRINT N'        ,@restore_job_id = @LS_Secondary__RestoreJobId OUTPUT';
+   PRINT N'        ,@secondary_id = @LS_Secondary__SecondaryId OUTPUT';
+   PRINT N'';
+   PRINT N'IF (@@ERROR = 0 AND @LS_Add_RetCode = 0)'; 
+   PRINT N'BEGIN'; 
+   PRINT N'';
+   PRINT N'DECLARE @LS_SecondaryCopyJobScheduleUID	As uniqueidentifier'; 
+   PRINT N'DECLARE @LS_SecondaryCopyJobScheduleID	AS int'; 
+   PRINT N'';
+   PRINT N'';
+   PRINT N'EXEC msdb.dbo.sp_add_schedule';
+   PRINT N'          @schedule_name =N''DefaultCopyJobSchedule'''; 
+   PRINT N'         ,@enabled = 1';
+   PRINT N'         ,@freq_type = 4'; 
+   PRINT N'	 	,@freq_interval = 1'; 
+   PRINT N'	 	,@freq_subday_type = 4'; 
+   PRINT N'	 	,@freq_subday_interval = 15'; 
+   PRINT N'	 	,@freq_recurrence_factor = 0 ';
+   PRINT N'	 	,@active_start_date =' + @currentDate;
+   PRINT N'	 	,@active_end_date = 99991231'; 
+   PRINT N'	 	,@active_start_time = 0'; 
+   PRINT N'	 	,@active_end_time = 235900'; 
+   PRINT N'	 	,@schedule_uid = @LS_SecondaryCopyJobScheduleUID OUTPUT'; 
+   PRINT N'	 	,@schedule_id = @LS_SecondaryCopyJobScheduleID OUTPUT'; 
+   PRINT N'';
+   PRINT N'EXEC msdb.dbo.sp_attach_schedule ';
+   PRINT N'	      @job_id = @LS_Secondary__CopyJobId ';
+   PRINT N'	 	,@schedule_id = @LS_SecondaryCopyJobScheduleID '; 
 
-EXEC msdb.dbo.sp_attach_schedule 
-		@job_id = @LS_Secondary__CopyJobId 
-		,@schedule_id = @LS_SecondaryCopyJobScheduleID  
-
-DECLARE @LS_SecondaryRestoreJobScheduleUID	As uniqueidentifier 
-DECLARE @LS_SecondaryRestoreJobScheduleID	AS int 
-
-
-EXEC msdb.dbo.sp_add_schedule 
-		@schedule_name =N'DefaultRestoreJobSchedule' 
-		,@enabled = 1 
-		,@freq_type = 4 
-		,@freq_interval = 1 
-		,@freq_subday_type = 4 
-		,@freq_subday_interval = 15 
-		,@freq_recurrence_factor = 0 
-		,@active_start_date = 20151002 
-		,@active_end_date = 99991231 
-		,@active_start_time = 0 
-		,@active_end_time = 235900 
-		,@schedule_uid = @LS_SecondaryRestoreJobScheduleUID OUTPUT 
-		,@schedule_id = @LS_SecondaryRestoreJobScheduleID OUTPUT 
-
-EXEC msdb.dbo.sp_attach_schedule 
-		@job_id = @LS_Secondary__RestoreJobId 
-		,@schedule_id = @LS_SecondaryRestoreJobScheduleID  
-
-
-END 
-
-
-DECLARE @LS_Add_RetCode2	As int 
-
-
-IF (@@ERROR = 0 AND @LS_Add_RetCode = 0) 
-BEGIN 
-
-EXEC @LS_Add_RetCode2 = master.dbo.sp_add_log_shipping_secondary_database 
-		@secondary_database = N'Test' 
-		,@primary_server = N'sql-logship-s' 
-		,@primary_database = N'Test' 
-		,@restore_delay = 0 
-		,@restore_mode = 1 
-		,@disconnect_users	= 0 
-		,@restore_threshold = 45   
-		,@threshold_alert_enabled = 1 
-		,@history_retention_period	= 5760 
-		,@overwrite = 1 
-		,@ignoreremotemonitor = 1 
+   PRINT N'DECLARE @LS_SecondaryRestoreJobScheduleUID	As uniqueidentifier'; 
+   PRINT N'DECLARE @LS_SecondaryRestoreJobScheduleID	AS int'; 
 
 
-END 
+   PRINT N'EXEC msdb.dbo.sp_add_schedule'; 
+   PRINT N'		 @schedule_name =N''DefaultRestoreJobSchedule'; 
+   PRINT N'	 	,@enabled = 1 ';
+   PRINT N'	 	,@freq_type = 4 ';
+   PRINT N'	 	,@freq_interval = 1 ';
+   PRINT N'	 	,@freq_subday_type = 4 ';
+   PRINT N'	 	,@freq_subday_interval = 15 ';
+   PRINT N'	 	,@freq_recurrence_factor = 0 ';
+   PRINT N'	 	,@active_start_date = ' + @currentDate;
+   PRINT N'	 	,@active_end_date = 99991231 ';
+   PRINT N'	 	,@active_start_time = 0 ';
+   PRINT N'	 	,@active_end_time = 235900 ';
+   PRINT N'	 	,@schedule_uid = @LS_SecondaryRestoreJobScheduleUID OUTPUT'; 
+   PRINT N'	 	,@schedule_id = @LS_SecondaryRestoreJobScheduleID OUTPUT ';
+
+   PRINT N'EXEC msdb.dbo.sp_attach_schedule ';
+   PRINT N'		 @job_id = @LS_Secondary__RestoreJobId'; 
+   PRINT N'	 	,@schedule_id = @LS_SecondaryRestoreJobScheduleID '; 
+   P
+
+   PRINT N'END 
 
 
-IF (@@error = 0 AND @LS_Add_RetCode = 0) 
-BEGIN 
+   PRINT N'DECLARE @LS_Add_RetCode2	As int 
 
-EXEC msdb.dbo.sp_update_job 
-		@job_id = @LS_Secondary__CopyJobId 
-		,@enabled = 1 
 
-EXEC msdb.dbo.sp_update_job 
-		@job_id = @LS_Secondary__RestoreJobId 
-		,@enabled = 1 
+   PRINT N'IF (@@ERROR = 0 AND @LS_Add_RetCode = 0) 
+   PRINT N'BEGIN 
 
-END 
+   PRINT N'EXEC @LS_Add_RetCode2 = master.dbo.sp_add_log_shipping_secondary_database 
+		   @secondary_database = N'Test' 
+   PRINT N'	 	,@primary_server = N'sql-logship-s' 
+   PRINT N'	 	,@primary_database = N'Test' 
+   PRINT N'	 	,@restore_delay = 0 
+   PRINT N'	 	,@restore_mode = 1 
+   PRINT N'	 	,@disconnect_users	= 0 
+   PRINT N'	 	,@restore_threshold = 45   
+   PRINT N'	 	,@threshold_alert_enabled = 1 
+   PRINT N'	 	,@history_retention_period	= 5760 
+   PRINT N'	 	,@overwrite = 1 
+   PRINT N'	 	,@ignoreremotemonitor = 1 
+
+
+   PRINT N'END 
+
+
+   PRINT N'IF (@@error = 0 AND @LS_Add_RetCode = 0) 
+   PRINT N'BEGIN 
+
+   PRINT N'EXEC msdb.dbo.sp_update_job 
+		   @job_id = @LS_Secondary__CopyJobId 
+   PRINT N'	 	,@enabled = 1 
+
+   PRINT N'EXEC msdb.dbo.sp_update_job 
+		   @job_id = @LS_Secondary__RestoreJobId 
+   PRINT N'	 	,@enabled = 1 
