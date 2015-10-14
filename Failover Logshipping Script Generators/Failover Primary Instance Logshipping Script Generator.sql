@@ -46,8 +46,8 @@ from
 --
 where
    (d.state_desc = N'ONLINE')
-   --AND d.is_read_only = 1 
-  --AND d.is_in_standby = 1
+   AND d.is_read_only = 1 
+   AND d.is_in_standby = 1
    and ((@databaseFilter is null) 
       or (d.name like N'%' + @databaseFilter + N'%'))
                                                   
@@ -213,9 +213,9 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'DECLARE @LS_BackupJobId	AS uniqueidentifier'; 
    PRINT N'       ,@LS_PrimaryId	AS uniqueidentifier'; 
    PRINT N'       ,@SP_Add_RetCode	As int';
-   PRINT N'       ,@currentDate    AS nvarchar(8) --Needs to be YYYYMMHH format';
+   PRINT N'       ,@currentDate    AS int --Needs to be YYYYMMHH format';
    PRINT N'';
-   PRINT N'SET @currentDate = convert(nvarchar(8), CURRENT_TIMESTAMP, 112); --YYYYMMHH';
+   PRINT N'SET @currentDate = cast((convert(nvarchar(8), CURRENT_TIMESTAMP, 112)) as int); --YYYYMMHH';
    PRINT N'';
    PRINT N'EXEC @SP_Add_RetCode = master.dbo.sp_add_log_shipping_primary_database'; 
    PRINT N'   @database = N''' + @databaseName + N''''; 
