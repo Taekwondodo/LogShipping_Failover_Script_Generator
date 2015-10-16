@@ -24,6 +24,7 @@ set @exclude_system = 1; --So system tables are excluded
 
 --================================
 --
+--Get information about the databases
 
 declare @databases table(
     primary_id                 uniqueidentifier not null primary key 
@@ -55,16 +56,101 @@ select
 from
    log_shipping_monitor_primary as lsmp 
    LEFT JOIN log_shipping_primary_databases as lspd on (lsmp.primary_id = lspd.primary_id)
-   LEFT JOIN master.sys.databases as d on (d.name = lspd.primary_database)
 where 
-      --we don't want a database that is offline or has yet to be restored
+      --Doesn't matter if a db is offline or not as long as it exists in lspd since we're just updating the monitor with the new logshipping configuration
 
-      (d.state_desc = N'ONLINE')
-      and d.is_read_only = 0
-      and d.is_in_standby = 0
-      and ((@databaseFilter is null) 
-         or (d.name like N'%' + @databaseFilter + N'%'))
+      ((@databaseFilter is null) 
+        or (lspd.primary_database like N'%' + @databaseFilter + N'%'))
 order by 
    lspd.primary_database ASC;
 
+IF(@debug = 1)BEGIN
 
+   SELECT 
+      *
+   FROM 
+      @databases AS d
+    ORDER BY 
+      d.database_name;
+end
+
+--===========================
+
+DECLARE @primaryID                nvarchar(128)
+       ,@databaseName             nvarchar(128)
+       ,@monitorServer            nvarchar(128)
+       ,@backupThreshold          int
+       ,@thresholdAlert           int
+       ,@historyRetentionPeriod   int
+       ,@thresholdAlertEnabled    tinyint --bit, but bit can't implicitly convert to char 
+
+SET @monitorServer = (SELECT TOP 1 d.monitor_server FROM @databases AS d)
+SET @databaseName = N'';
+
+PRINT N'--================================';
+PRINT N'--';
+PRINT N'-- Use the following script to update monitor server ' + quotename(@monitorServer) + N' with the new primary failover logshipping configurations of the following databases on' + quotename(@@SERVERNAME) + N':';
+PRINT N'--';
+
+WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
+
+   SELECT TOP 1
+      @databaseName = d.database_name
+   FROM 
+      @databases AS d
+   WHERE 
+      @databaseName < d.database_name
+   ORDER BY
+      d.database_name;
+
+   PRINT N'-- ' + quotename(@databaseName);
+
+END;
+
+--Start the actual script
+
+SET @databaseName = N'';
+
+PRINT N'';
+PRINT N'BEGIN TRANSACTION';
+PRINT N'';
+
+WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
+
+   SELECT TOP 1
+      @primaryID = d.primary_id
+     ,@databaseName = d.database_name
+     ,@backupThreshold = d.backup_threshold
+     ,@thresholdAlert = d.threshold_alert
+     ,@historyRetentionPeriod = d.history_retention_period
+     ,@thresholdAlertEnabled = d.threshold_alert_enabled
+   FROM 
+      @databases AS d
+   WHERE 
+      @databaseName < d.database_name
+   ORDER BY
+      d.database_name;
+
+
+   PRINT N'PRINT N''Inserting ' + quotename(@databaseName) + N'''''s logshipping configuartion'';';
+   PRINT N'PRINT N'''';';
+   PRINT N'';
+   PRINT N'EXEC msdb.dbo.sp_processlogshippingmonitorprimary'; 
+   PRINT N'		 @mode = 1'; --1 = create, 2 = delete, 3 = update  
+   PRINT N'	 	,@primary_id = N''' + @primaryID + N''''; 
+   PRINT N'	 	,@primary_server = N''' + @@SERVERNAME + N''''; 
+   PRINT N'	 	,@monitor_server = N''' + @monitorServer + N'''';
+   PRINT N'	 	,@monitor_server_security_mode = 1';
+   PRINT N'	 	,@primary_database = N''' + @databaseName + N'''';
+   PRINT N'	 	,@backup_threshold = ' + CAST(@backupThreshold AS VARCHAR);
+   PRINT N'	 	,@threshold_alert = ' + CAST(@thresholdAlert AS VARCHAR);
+   PRINT N'	 	,@threshold_alert_enabled = ' + CAST(@thresholdAlertEnabled AS VARCHAR); 
+   PRINT N'	 	,@history_retention_period = ' + CAST(@historyRetentionPeriod AS VARCHAR);
+   PRINT N'';
+   PRINT N'    IF(@@ERROR <> 0)BEGIN';
+   PRINT N'      ROLLBACK TRANSACTION;';
+   PRINT N'    END;';
+   PRINT N'';
+   PRINT N'';
+END;
+PRINT N'COMMIT TRANSACTION;';

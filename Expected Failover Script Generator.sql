@@ -273,14 +273,13 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'       BEGIN';
    PRINT N'          PRINT N''Error disabling ' + quotename(@jobName) + N''';';
    PRINT N'          ROLLBACK TRANSACTION;';
-   PRINT N'       END;';
+   PRINT N'       END';
    PRINT N'    ELSE';
    PRINT N'       PRINT N''Backup job disabled successfully'';';
    PRINT N'       PRINT N'''';';
-   PRINT N'GO';
    PRINT N'';
 
-END
+END;
 PRINT N'COMMIT TRANSACTION;';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N'''';';
