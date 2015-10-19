@@ -1,7 +1,6 @@
 /*
 
-Use this script to produce a T-SQL script to run on the secondary instances of a logshipping configuration to complete the failover
-
+Use this script to produce a T-SQL script to run on the secondary instances of a logshipping configuration failover to it.
 */
 
 set nocount on;
@@ -255,11 +254,13 @@ PRINT N'                         running               INT              NOT NULL
 PRINT N'                         current_step          INT              NOT NULL,';
 PRINT N'                         current_retry_attempt INT              NOT NULL,';
 PRINT N'                         job_state             INT              NOT NULL)';
-PRINT N'';
-PRINT N'BEGIN TRANSACTION;';      
+PRINT N'';   
 PRINT N'';
 PRINT N'PRINT N''Starting failover to secondary databases. Disabling secondary jobs...'';';
 PRINT N'PRINT N'''';';
+PRINT N'';
+PRINT N'BEGIN TRANSACTION;';
+PRINT N'BEGIN TRY';   
 
 --Iterate through the job ids and generate scripts to disable them
 
@@ -286,6 +287,7 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    --Convert the int avg_runtime to a datetime format acceptable by WAITFOR DELAY
 
    SET @avgRuntime = CAST((@totalSeconds / 3600) AS nvarchar(2)) + ':' + CAST((@totalSeconds / 60 % 60) AS nvarchar(2)) + ':' + CAST((@totalSeconds % 60) AS nvarchar(2)) 
+
 
    PRINT N'';
    PRINT N'PRINT N''================================'';';
@@ -314,6 +316,7 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'       BEGIN';
    PRINT N'          PRINT N''Error disabling ' + quotename(@jobName) + N' Rolling back...'';';
    PRINT N'          ROLLBACK TRANSACTION;';
+   PRINT N'          RETURN;';
    PRINT N'       END';
    PRINT N'    ELSE';
    PRINT N'       PRINT N''Job disabled successfully'';';
@@ -321,11 +324,19 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
 END;
 
 PRINT N'';
+PRINT N'END TRY';
+PRINT N'BEGIN CATCH';
+PRINT N'    PRINT N''There was an error stopping/disabling ' + quotename(@jobName) + N'. Rolling back and quitting execution...'';';
+PRINT N'    ROLLBACK TRANSACTION;';
+PRINT N'    RETURN;';
+PRINT N'END CATCH;';
 PRINT N'COMMIT TRANSACTION;';
+
 PRINT N'';
 PRINT N'PRINT N''Running databases'''' secondary jobs to ensure their respective transaction log tail backups are applied...'';';
 PRINT N'';
 PRINT N'BEGIN TRANSACTION;';
+PRINT N'BEGIN TRY';
 
 set @databaseName = N'';
 
@@ -351,12 +362,14 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    --Check to make sure the transaction log tail was copied over
 
+   PRINT N'';
    PRINT N'PRINT N''Running jobs for ' + quotename(@databaseName) + N'. Starting copy job...'';';
    PRINT N'';
-   PRINT N'EXEC @retcode = msdb.dbo.sp_start_job @job_id = ''' + @copyJobName + N'''';
+   PRINT N'EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @copyJobName + N'''';
    PRINT N'    IF(@retcode <> 0) BEGIN';
    PRINT N'       PRINT N''Error running ' + quotename(@copyJobName) + N'. Rolling back...'';';
    PRINT N'       ROLLBACK TRANSACTION;';
+   PRINT N'       RETURN;';
    PRINT N'    END;';
    PRINT N'';
    PRINT N'--Check to make sure the transaction log tail backup was copied';
@@ -368,16 +381,20 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'    PRINT N''' + quotename(@copyJobName) + N' did not copy over the Transaction Log Tail Backup. Check to make sure the file name follows the same format'';';
    PRINT N'    PRINT N''as the backups output by the jobs themselves. This includes being in UTC. Rolling Back...'';';
    PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    RETURN;';
    PRINT N'';
    PRINT N'--Run restore job';
    PRINT N'';
-   PRINT N'EXEC @retcode = msdb.dbo.sp_start_job @job_id = ''' + @restoreJobName + N'''';
+   PRINT N'EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @restoreJobName + N'''';
    PRINT N'    IF (@retcode <> 0) BEGIN';
    PRINT N'       PRINT N''Error running ' + quotename(@restoreJobName) + N'. Rolling back...'';';
    PRINT N'       ROLLBACK TRANSACTION;';
+   PRINT N'       RETURN;';
    PRINT N'    END;';
    PRINT N'';
+
    --Check to make sure the transaction log tail backup was restored
+
    PRINT N'--Make sure the Transaction Log Tail Backup was restored'
    PRINT N'IF (EXISTS(';
    PRINT N'       SELECT TOP 1';
@@ -392,22 +409,34 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'       ))';
    PRINT N'BEGIN';
    PRINT N'    PRINT N''Transaction Log Tail Backup successfully restored.'';';
+   PRINT N'    COMMIT TRANSACTION;';
    PRINT N'END';
    PRINT N'ELSE';
    PRINT N'    PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...'';';
    PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    RETURN;';
    PRINT N''
    PRINT N'PRINT N''Bringing ' + quotename(@databaseName) + N' online'';';
    PRINT N'';
    PRINT N'--Bring the database online. If the restore fails quit execution with error';
    PRINT N'';
+   PRINT N'BEGIN TRY';
    PRINT N'RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;';
-   PRINT N'    IF(@@ERROR <> 0) BEGIN';
-   PRINT N'       raiserror(''Restore operation failed'', 20, -1) with log';
-   PRINT N'    END;';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N''Error encountered while restoring ' + quotename(@databaseName) + N'. Quitting execution...'';';
+   PRINT N'    RETURN;';
+   PRINT N'END CATCH;';
    PRINT N'';
 END;
-PRINT N'    COMMIT TRANSACTION;';
+PRINT N'';
+PRINT N'END TRY';
+PRINT N'BEGIN CATCH';
+PRINT N'    PRINT N''Error checking/running ' + quotename(@restoreJobName) + N' or ' + quotename(@copyJobName) + N'. Rolling back and quitting execution...'';';
+PRINT N'    ROLLBACK TRANSACTION;';
+PRINT N'    RETURN;';
+PRINT N'END CATCH;';
+PRINT N'';
 PRINT N'PRINT N''Failover to ' + quotename(@@SERVERNAME) + N' complete'';';
 
 
