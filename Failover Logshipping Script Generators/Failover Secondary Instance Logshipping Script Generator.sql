@@ -179,6 +179,7 @@ FROM
 PRINT N'--================================';
 PRINT N'--';
 PRINT N'-- Use the following script to configure failover logshipping for the following databases as secondaries on ' + @secondaryServer + ' with backup source and destination paths:';
+PRINT N'-- Run on the original primary';
 PRINT N'--';
 
 
@@ -206,6 +207,12 @@ PRINT N'';
 PRINT N'PRINT N''Beginning Logshipping Configurations...'';';
 PRINT N'PRINT N'''';';
 PRINT N'';
+PRINT N'DECLARE @LS_Secondary__CopyJobId	  AS uniqueidentifier';
+PRINT N'DECLARE @LS_Secondary__RestoreJobId	  AS uniqueidentifier'; 
+PRINT N'DECLARE @LS_Secondary__SecondaryId	  AS uniqueidentifier'; 
+PRINT N'DECLARE @LS_Add_RetCode	            As int'; 
+PRINT N'DECLARE @currentDate                   AS int';
+PRINT N'DECLARE @currentDatabase               AS nvarchar(128)';
 
 --
 --End of setup, start logshipping 
@@ -258,13 +265,27 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName > d.database_name
    PRINT N'';
    PRINT N'BEGIN TRANSACTION;';
    PRINT N'';
-   PRINT N'DECLARE @LS_Secondary__CopyJobId	AS uniqueidentifier';
-   PRINT N'DECLARE @LS_Secondary__RestoreJobId	AS uniqueidentifier'; 
-   PRINT N'DECLARE @LS_Secondary__SecondaryId	AS uniqueidentifier'; 
-   PRINT N'DECLARE @LS_Add_RetCode	               As int'; 
-   PRINT N'DECLARE @currentDate                   AS int';
    PRINT N'';
+   PRINT N'SET @LS_Secondary__CopyJobId = NULL';
+   PRINT N'SET @LS_Secondary__RestoreJobId = NULL';
+   PRINT N'SET @LS_Secondary__SecondaryId = NULL'; 
    PRINT N'SET @currentDate = CAST((convert(nvarchar(8), CURRENT_TIMESTAMP, 112) AS int); --YYYYMMHH';
+   PRINT N'SET @currentDatabase = N''' + @databaseName + N''';';
+   PRINT N'';
+   PRINT N'--Make sure the databases aren''t already configured as a secondary, are online, and are in standby/read-only';
+   PRINT N'';
+   PRINT N'IF(EXISTS(';
+   PRINT N'       SELECT';
+   PRINT N'          *';
+   PRINT N'       FROM';
+   PRINT N'          master.sys.databases AS d LEFT JOIN log_shipping_secondary_databases AS lssd ON (d.name = lssd.secondary_database)';
+   PRINT N'       WHERE';
+   PRINT N'          d.name = @currentDatabase';
+   PRINT N'          AND lssd.secondary_database = NULL';
+   PRINT N'          AND d.status = ''ONLINE''';
+   PRINT N'          AND d.is_read_only = 1';
+   PRINT N'          AND d.is_in_standby = 1';
+   PRINT N'))BEGIN';       
    PRINT N'';
    PRINT N'EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary'; 
    PRINT N'         @primary_server = N''' + @@SERVERNAME + N'''';  
@@ -370,9 +391,13 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName > d.database_name
    PRINT N'	 	,@overwrite = 1';
    PRINT N'	 	,@ignoreremotemonitor = 1';
    PRINT N'';
-   PRINT N'ELSE';
-   PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'END'; 
+   PRINT N'ELSE BEGIN';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    An error was encountered while executing master.dbo.sp_add_log_shipping_secondary_primary. Rolling back and quitting execution';
+   PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    RETURN;';
+   PRINT N'END;';
    PRINT N'';
    PRINT N'';
    PRINT N'IF (@@error = 0 AND @LS_Add_RetCode = 0)'; 
@@ -387,6 +412,8 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName > d.database_name
    PRINT N'	 	,@enabled = 1';
    PRINT N'';
    PRINT N'ELSE';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''An error was encountered
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'END';
    PRINT N'';

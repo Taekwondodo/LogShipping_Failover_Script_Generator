@@ -133,6 +133,7 @@ SET @maxLen = (SELECT MAX(datalength(d.secondary_database)) FROM @databases as d
 PRINT N'--================================';
 PRINT N'--';
 PRINT N'-- Use the following script to configure failover logshipping for the following databases as primaries on ' + quotename(@secondaryServer) + N' with backup destinations:';
+PRINT N'-- Run on the original secondary';
 PRINT N'--';
 
 
@@ -223,9 +224,20 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'SET @currentDate = cast((convert(nvarchar(8), CURRENT_TIMESTAMP, 112)) as int); --YYYYMMHH';
    PRINT N'SET @currentDatabase = ''' + @databaseName + N'''';
    PRINT N'';
-   PRINT N'--Check to make sure the database isn''t already configured as a primary';
+   PRINT N'--Check to make sure the database isn''t already configured as a primary, is online, and has been restored';
    PRINT N'';
-   PRINT N'IF(NOT EXISTS(SELECT * FROM log_shipping_primary_databases AS lspd WHERE lspd.primary_database = @currentDatabase))BEGIN';
+   PRINT N'IF(EXISTS(';
+   PRINT N'    SELECT';
+   PRINT N'       *';
+   PRINT N'    FROM'; 
+   PRINT N'       master.sys.databases AS d LEFT JOIN log_shipping_primary_databases AS lspd ON (d.name = lspd.primary_database)';
+   PRINT N'    WHERE';
+   PRINT N'       d.name = @currentDatabase';
+   PRINT N'       AND lspd.primary_database = NULL';
+   PRINT N'       AND d.state_desc = ''ONLINE''';
+   PRINT N'       AND d.is_in_standby = 0';
+   PRINT N'       AND d.is_read_ony = 0';
+   PRINT N'))BEGIN';
    PRINT N'';
    PRINT N' 	EXEC @SP_Add_RetCode = master.dbo.sp_add_log_shipping_primary_database'; 
    PRINT N' 	   @database = N''' + @databaseName + N''''; 

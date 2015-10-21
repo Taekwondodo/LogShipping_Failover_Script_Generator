@@ -89,7 +89,8 @@ SET @databaseName = N'';
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Use the following script to update monitor server ' + quotename(@monitorServer) + N' with the new primary failover logshipping configurations of the following databases on' + quotename(@@SERVERNAME) + N':';
+PRINT N'-- Use the following script to update monitor server ' + quotename(@monitorServer) + N' with the new primary failover logshipping configurations of the following databases on ' + quotename(@@SERVERNAME) + N':';
+PRINT N'--Run on the monitor server';
 PRINT N'--';
 
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
@@ -148,8 +149,14 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'	 	,@history_retention_period = ' + CAST(@historyRetentionPeriod AS VARCHAR);
    PRINT N'';
    PRINT N'    IF(@@ERROR <> 0)BEGIN';
+   PRINT N'      PRINT N'''';';
+   PRINT N'      PRINT N''There was an issue inserting data. Rolling back and quitting execution...'';';
    PRINT N'      ROLLBACK TRANSACTION;';
+   PRINT N'      RETURN;';
    PRINT N'    END;';
+   PRINT N'';
+   PRINT N'PRINT N''Insertion Succeeded'';';
+   PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'';
 END;
