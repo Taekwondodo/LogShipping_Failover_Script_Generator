@@ -169,15 +169,15 @@ PRINT N'';
 --
 DECLARE  @monitorServer          nvarchar(128)
         ,@originalDatabase       nvarchar(128)
-        ,@backupRetention        int
-        ,@backupThreshold        int
-        ,@thresholdAlert         bit
-        ,@historyRetention       int
-        ,@freqType               int
-        ,@freqInterval           int
-        ,@freqSubday             int
-        ,@freqSubdayInterval     int
-        ,@freqRecurrent          int
+        ,@backupRetention        nvarchar(10)
+        ,@backupThreshold        nvarchar(10)
+        ,@thresholdAlert         nvarchar(1)
+        ,@historyRetention       nvarchar(10)
+        ,@freqType               nvarchar(10)
+        ,@freqInterval           nvarchar(10)
+        ,@freqSubday             nvarchar(10)
+        ,@freqSubdayInterval     nvarchar(10)
+        ,@freqRecurrent          nvarchar(10)
                      
        
 SET @databaseName = N'';
@@ -244,12 +244,12 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N' 	  ,@backup_directory = N''' + @backupPath + N'''';
    PRINT N' 	  ,@backup_share = N''' + @backupPath + N''''; 
    PRINT N' 	  ,@backup_job_name = N''LSBackup_' + @databaseName + N''''; 
-   PRINT N' 	  ,@backup_retention_period = ' + CAST(@backupRetention AS varchar);
+   PRINT N' 	  ,@backup_retention_period = ' @backupRetention ;
    PRINT N' 	  ,@monitor_server = N''' + @monitorServer + N'''';
    PRINT N' 	  ,@monitor_server_security_mode = 1';
-   PRINT N' 	  ,@backup_threshold = ' + CAST(@backupThreshold AS varchar);
-   PRINT N' 	  ,@threshold_alert_enabled = ' + CAST(@thresholdAlert AS nvarchar(1));
-   PRINT N' 	  ,@history_retention_period = ' + CAST(@historyRetention AS varchar);
+   PRINT N' 	  ,@backup_threshold = ' @backupThreshold ;
+   PRINT N' 	  ,@threshold_alert_enabled = ' @thresholdAlert;
+   PRINT N' 	  ,@history_retention_period = ' @historyRetention ;
    PRINT N' 	  ,@backup_job_id = @LS_BackupJobId OUTPUT';
    PRINT N' 	  ,@primary_id = @LS_PrimaryId OUTPUT';
    PRINT N' 	  ,@overwrite = 1';
@@ -266,11 +266,11 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N' 	EXEC msdb.dbo.sp_add_schedule';
    PRINT N' 			   @schedule_name =N''LSBackupSchedule_' + lower(@secondaryServer) + N'1' + N''''; --The 1 is kept from the original configuration
    PRINT N' 			   ,@enabled = 1';
-   PRINT N' 			   ,@freq_type = ' + CAST(@freqType AS varchar);
-   PRINT N' 			   ,@freq_interval = ' + CAST(@freqInterval AS varchar);
-   PRINT N' 			   ,@freq_subday_type = ' + CAST(@freqSubday AS varchar);
-   PRINT N' 			   ,@freq_subday_interval = ' + CAST(@freqSubdayInterval AS varchar);
-   PRINT N' 			   ,@freq_recurrence_factor = ' + CAST(@freqRecurrent AS varchar);
+   PRINT N' 			   ,@freq_type = ' @freqType ;
+   PRINT N' 			   ,@freq_interval = ' @freqInterval ;
+   PRINT N' 			   ,@freq_subday_type = ' @freqSubday ;
+   PRINT N' 			   ,@freq_subday_interval = ' @freqSubdayInterval ;
+   PRINT N' 			   ,@freq_recurrence_factor = ' @freqRecurrent ;
    PRINT N' 			   ,@active_start_date = @currentDate'; 
    PRINT N' 			   ,@active_end_date = 99991231';
    PRINT N' 			   ,@active_start_time = 0';
@@ -301,12 +301,11 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'';
    PRINT N'END';
    PRINT N'ELSE';
-   PRINT N'    PRINT N''' + quotename(@databaseName) + N' is already configured as a primary, skipping...'';';
+   PRINT N'    PRINT N''' + quotename(@databaseName) + N' is either offline, not yet restored, or is already configured as a primary. Skipping...'';';
    PRINT N'';
 END;
 
 
- 
 
 
 

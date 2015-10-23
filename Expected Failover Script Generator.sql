@@ -115,7 +115,7 @@ SELECT
        lspd.backup_job_id AS job_id, MAX(sj.name), AVG(t2.Total_Seconds) AS avg_runtime
 FROM
     @backup_files AS bf 
-    LEFT JOIN msdb.dbo.log_shipping_primary_databases AS lspd ON (lspd.primary_database = bf.database_name) --We join to @backup_files in case we have a filter on a logshipped db
+    LEFT JOIN msdb.dbo.log_shipping_primary_databases AS lspd ON (lspd.primary_database = bf.database_name) --We join to @backup_files to act as a filter
     LEFT JOIN msdb.dbo.sysjobs AS sj ON (lspd.backup_job_id = sj.job_id) --sysjobs tells us if a job is enabled
     RIGHT JOIN msdb.dbo.sysjobhistory AS sjh ON (sjh.job_id = lspd.backup_job_id)
     OUTER APPLY (
@@ -145,7 +145,7 @@ END;
 
 print N'--================================';
 print N'--';
-print N'-- Use the following script to perform a logship failback for the following databases on ' + quotename(@@servername) + ':';
+print N'-- Use the following script to perform a logship failover for the following databases on ' + quotename(@@servername) + ':';
 print N'--';
 
 declare @databaseName   nvarchar(128)

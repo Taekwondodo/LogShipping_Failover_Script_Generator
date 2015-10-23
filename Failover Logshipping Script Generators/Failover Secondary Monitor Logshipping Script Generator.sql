@@ -24,7 +24,7 @@ set @exclude_system = 1; --So system tables are excluded
 
 --================================
 --
---Get information about the databases
+--Get necessary information about the databases forthe proc
 
 declare @databases table(
     secondary_id               uniqueidentifier not null primary key 
@@ -89,17 +89,18 @@ DECLARE @secondaryID              nvarchar(128)
        ,@primaryServer            nvarchar(128)
        ,@primaryDatabase          nvarchar(128)
        ,@monitorServer            nvarchar(128)
-       ,@restoreThreshold         int
-       ,@thresholdAlert           int
-       ,@historyRetentionPeriod   int
-       ,@thresholdAlertEnabled    tinyint --bit, but bit can't implicitly convert to char 
+       ,@restoreThreshold         nvarchar(10)
+       ,@thresholdAlert           nvarchar(10)
+       ,@historyRetentionPeriod   nvarchar(10)
+       ,@thresholdAlertEnabled    nvarchar(1) 
 
 SET @monitorServer = (SELECT TOP 1 d.monitor_server FROM @databases AS d)
 SET @databaseName = N'';
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Use the following script to update monitor server ' + quotename(@monitorServer) + N' with the new secondary failover logshipping configurations of the following databases on' + quotename(@@SERVERNAME) + N':';
+PRINT N'-- Run on ' + quotename(@monitorServer);
+PRINT N'-- Use the following script to update monitor server ' + quotename(@monitorServer) + N' with the new failover secondary logshipping configurations of the following databases on ' + quotename(@@SERVERNAME) + N':';
 PRINT N'--';
 
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
@@ -143,12 +144,12 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    ORDER BY
       d.database_name;
 
-
-   PRINT N'PRINT N''Inserting ' + quotename(@databaseName) + N'''s logshipping configuartion'';';
-   PRINT N'PRINT N'''';';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
+   PRINT N'PRINT N''Inserting ' + quotename(@databaseName) + N'''''s logshipping configuartion'';';
    PRINT N'';
    PRINT N'EXEC msdb.dbo.sp_processlogshippingmonitorsecondary'; 
-   PRINT N'		 @mode = 1'; --1 = create, 2 = delete, 3 = update
+   PRINT N'		 @mode = 1 --1 = create, 2 = delete, 3 = update';
    PRINT N'	 	,@secondary_server = N''' + @@SERVERNAME + N''''; 
    PRINT N'	 	,@secondary_database = N''' + @databaseName + N'''';
    PRINT N'	 	,@secondary_id = N''' + @secondaryID + N'''';
@@ -160,5 +161,16 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'	 	,@history_retention_period	= ' + @historyRetentionPeriod;
    PRINT N'	 	,@monitor_server = N''' + @monitorServer + N''''; 
    PRINT N'	 	,@monitor_server_security_mode = 1';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''An error occurred while executing sp_processlogshippingmonitorsecondary for ' + quotename(@databaseName) + N'. Rolling back and quitting execution...'';';
+   PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    RETURN;';
+   PRINT N'END CATCH;';
+   PRINT N'';
+   PRINT N'PRINT N''' + quotename(@databaseName) + N' successfully inserted'';';
+   PRINT N'PRINT N'''';';
 END;
+PRINT N'PRINT N''All databases successfully inserted'';';
 PRINT N'COMMIT TRANSACTION;';
