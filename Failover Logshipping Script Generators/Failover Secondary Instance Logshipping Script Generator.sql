@@ -6,8 +6,6 @@ Use this script to produce a T-SQL script to run on the primary instance you're 
 
 */
 
---We won't be able to fully run this script until the secondary instance is set up as a primary instance
-
 set nocount on;
 go
 
@@ -29,9 +27,9 @@ set @exclude_system = 1; --So system tables are excluded
 
 declare @databases table (
   database_name               nvarchar(128) not null primary key
- ,original_secondary          nvarchar(128)
- ,copy_job_id                 uniqueidentifier
- ,restore_job_id              uniqueidentifier
+ ,original_secondary          nvarchar(128) not null
+ ,copy_job_id                 uniqueidentifier not null
+ ,restore_job_id              uniqueidentifier not null
  ,backup_source_path          nvarchar(500) not null
  ,backup_destination_path     nvarchar(500) not null
  ,file_retention_period       int not null
@@ -60,23 +58,23 @@ insert into @databases (
 )
 select
     lsps.secondary_database AS database_name
+   ,lssd.secondary_database AS original_secondary
    ,lss.copy_job_id AS copy_job_id
    ,lss.restore_job_id AS restore_job_id
    ,lss.backup_source_directory AS backup_source_path
    ,lss.backup_destination_directory AS backup_destination_path
    ,lss.file_retention_period AS file_retention_period
-   ,lssd.secondary_database AS original_secondary
    ,lssd.restore_delay AS restore_delay
-   ,lssd.restore_mode AS restore_mode
-   ,lssd.disconnect_users AS disconnect_users
    ,lsms.restore_threshold AS restore_threshold
    ,lsms.history_retention_period AS history_retention_period
    ,lsms.threshold_alert_enabled AS threshold_alert_enabled
+   ,lssd.restore_mode AS restore_mode
+   ,lssd.disconnect_users AS disconnect_users
 from
     log_shipping_primary_secondaries AS lsps LEFT JOIN log_shipping_secondary AS lss ON (lsps.secondary_database = lss.primary_database)
     LEFT JOIN log_shipping_secondary_databases AS lssd ON (lssd.secondary_id = lss.secondary_id)
     LEFT JOIN log_shipping_monitor_secondary AS lsms ON (lsms.secondary_id = lss.secondary_id)
-
+    
 --The join we usually do to sys.databases here to check if the db is online and such will have to be done within the outputted script since this is being ran
 --on the primary instance where there isn't access to the state of the secondary instance's databases
 
@@ -176,11 +174,9 @@ FROM
 
 --================================
 
-PRINT N'--================================';
-PRINT N'--';
-PRINT N'-- Use the following script to configure failover logshipping for the following databases as secondaries on ' + @secondaryServer + ' with backup source and destination paths:';
-PRINT N'-- Run on the original primary';
-PRINT N'--';
+PRINT N'';
+PRINT N' --Use the following script to configure failover logshipping for the following databases as secondaries on ' + @secondaryServer + ' with backup source and destination paths:';
+PRINT N' --Run on the original primary';
 
 
 WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
@@ -196,10 +192,21 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    ORDER BY d.database_name ASC;
 
-   PRINT N'--   ' + LEFT((@databaseName + replicate(' ', @maxDatabaseLen / 2)), @maxDatabaseLen / 2) + LEFT((@backupSourcePath + replicate(' ', @maxPathLen / 2)), @maxPathLen / 2) + @backupDestinationPath  ;
+   PRINT N'--   ' + LEFT((@databaseName + replicate(' ', @maxDatabaseLen / 2)), @maxDatabaseLen / 2) + N'   ' + LEFT((@backupSourcePath + replicate(' ', @maxPathLen / 2)), @maxPathLen / 2) + N'  ' + @backupDestinationPath  ;
 
 END;     
 
+PRINT N'';
+PRINT N'/*';
+PRINT N'Since the configuration can''t be contained within a transaction, if an error occurs during execution there is a possibility that artifacts may be created depending on when the error occurred';
+PRINT N'Here is a list of all the tables that may contain artifacts (assume the tables are within msdb):'
+PRINT N'';
+PRINT N'log_shipping_secondary_databases';
+PRINT N'log_shipping_monitor_secondary';
+PRINT N'log_shipping_secondary';
+PRINT N'';
+PRINT N'There are several tables that contain artifacts from the creation of the backup jobs, however simply deleting the jobs will remove the artifacts';
+PRINT N'*/';
 PRINT N'--';
 PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
 PRINT N'--================================';
@@ -207,34 +214,28 @@ PRINT N'';
 PRINT N'PRINT N''Beginning Logshipping Configurations...'';';
 PRINT N'PRINT N'''';';
 PRINT N'';
-PRINT N'DECLARE @LS_Secondary__CopyJobId	  AS uniqueidentifier';
-PRINT N'DECLARE @LS_Secondary__RestoreJobId	  AS uniqueidentifier'; 
-PRINT N'DECLARE @LS_Secondary__SecondaryId	  AS uniqueidentifier'; 
-PRINT N'DECLARE @LS_Add_RetCode	            As int'; 
-PRINT N'DECLARE @currentDate                   AS int';
-PRINT N'DECLARE @currentDatabase               AS nvarchar(128)';
 
 --
 --End of setup, start logshipping 
 --
 
 DECLARE @originalSecondary          nvarchar(128)
-       ,@fileRetentionPeriod        int
-       ,@restoreDelay               int
-       ,@restoreThreshold           int
-       ,@historyRetentionPeriod     int
-       ,@thresholdAlertEnabled      tinyint
-       ,@restoreMode                tinyint
-       ,@disconnectUsers            tinyint
-       ,@freqType                   int
-       ,@freqInterval               int
-       ,@freqSubdayType             int
-       ,@freqSubdayInterval         int
-       ,@freqRecurrenceFactor       int
+       ,@fileRetentionPeriod        nvarchar(128)
+       ,@restoreDelay               nvarchar(128)
+       ,@restoreThreshold           nvarchar(128)
+       ,@historyRetentionPeriod     nvarchar(128)
+       ,@thresholdAlertEnabled      nvarchar(128)
+       ,@restoreMode                nvarchar(128)
+       ,@disconnectUsers            nvarchar(128)
+       ,@freqType                   nvarchar(128)
+       ,@freqInterval               nvarchar(128)
+       ,@freqSubdayType             nvarchar(128)
+       ,@freqSubdayInterval         nvarchar(128)
+       ,@freqRecurrenceFactor       nvarchar(128)
    
 SET @databaseName = N'';
 
-WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName > d.database_name))BEGIN
+WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name))BEGIN
 
    SELECT TOP 1
        @databaseName = d.database_name
@@ -256,80 +257,86 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName > d.database_name
    FROM
       @databases AS d LEFT JOIN @jobInfo AS ji ON (d.database_name = ji.target_database)
    WHERE 
-      @databaseName > d.database_name
+      @databaseName < d.database_name
       AND ji.job_name LIKE '%Copy%'
    ORDER BY
       d.database_name ASC;
 
+   PRINT N''
+   PRINT N'GO';
+   PRINT N'';
    PRINT N'PRINT N''Starting Logshipping for ' + @databaseName + N''';';
    PRINT N'';
-   PRINT N'BEGIN TRANSACTION;';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
+   PRINT N'	DECLARE @LS_Secondary__CopyJobId	       AS uniqueidentifier';
+   PRINT N'	DECLARE @LS_Secondary__RestoreJobId	  AS uniqueidentifier'; 
+   PRINT N'	DECLARE @LS_Secondary__SecondaryId	       AS uniqueidentifier'; 
+   PRINT N'	DECLARE @LS_Add_RetCode	                 As int'; 
+   PRINT N'	DECLARE @currentDate                      AS int';
+   PRINT N'	DECLARE @currentDatabase                  AS nvarchar(128)';
+   PRINT N'';
+   PRINT N'	SET @currentDate = CAST((convert(nvarchar(8), CURRENT_TIMESTAMP, 112) AS int); --YYYYMMHH';
+   PRINT N'	SET @currentDatabase = N''' + @databaseName + N''';';
+   PRINT N'';
+   PRINT N'	--Make sure the databases aren''t already configured as a secondary, are online, and are in standby/read-only';
+   PRINT N'';
+   PRINT N'	IF(EXISTS(';
+   PRINT N'	       SELECT';
+   PRINT N'	          *';
+   PRINT N'	       FROM';
+   PRINT N'	          master.sys.databases AS d LEFT JOIN log_shipping_secondary_databases AS lssd ON (d.name = lssd.secondary_database)';
+   PRINT N'	       WHERE';
+   PRINT N'	          d.name = @currentDatabase';
+   PRINT N'	          AND lssd.secondary_database = NULL';
+   PRINT N'	          AND d.status = ''ONLINE''';
+   PRINT N'	          AND d.is_read_only = 1';
+   PRINT N'	          AND d.is_in_standby = 1';
+   PRINT N'	))BEGIN';       
+   PRINT N'';
+   PRINT N'		EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary'; 
+   PRINT N'		         @primary_server = N''' + @@SERVERNAME + N'''';  
+   PRINT N'		        ,@primary_database = N''' + @originalSecondary + N'''';
+   PRINT N'		        ,@backup_source_directory = N''' + @backupSourcePath + N'''';
+   PRINT N'		        ,@backup_destination_directory = N''' + @backupDestinationPath + N''''; 
+   PRINT N'		        ,@copy_job_name = N''LSCopy_' + lower(@@SERVERNAME) + N'_' + @databaseName + N''''; 
+   PRINT N'		        ,@restore_job_name = N''LSRestore_' + lower(@@SERVERNAME) + N'_' + @databaseName + N''''; 
+   PRINT N'		        ,@file_retention_period = ' + @fileRetentionPeriod;
+   PRINT N'		        ,@monitor_server = N''' + @monitorServer + N'''';
+   PRINT N'		        ,@monitor_server_security_mode = 1';
+   PRINT N'		        ,@overwrite = 1';
+   PRINT N'		        ,@copy_job_id = @LS_Secondary__CopyJobId OUTPUT';
+   PRINT N'		        ,@restore_job_id = @LS_Secondary__RestoreJobId OUTPUT';
+   PRINT N'		        ,@secondary_id = @LS_Secondary__SecondaryId OUTPUT';
+   PRINT N'';
+   PRINT N'		IF (@@ERROR = 0 AND @LS_Add_RetCode = 0)'; 
+   PRINT N'		BEGIN'; 
+   PRINT N'';
+   PRINT N'			DECLARE @LS_SecondaryCopyJobScheduleUID	As uniqueidentifier'; 
+   PRINT N'			DECLARE @LS_SecondaryCopyJobScheduleID	AS int'; 
    PRINT N'';
    PRINT N'';
-   PRINT N'SET @LS_Secondary__CopyJobId = NULL';
-   PRINT N'SET @LS_Secondary__RestoreJobId = NULL';
-   PRINT N'SET @LS_Secondary__SecondaryId = NULL'; 
-   PRINT N'SET @currentDate = CAST((convert(nvarchar(8), CURRENT_TIMESTAMP, 112) AS int); --YYYYMMHH';
-   PRINT N'SET @currentDatabase = N''' + @databaseName + N''';';
+   PRINT N'			EXEC msdb.dbo.sp_add_schedule';
+   PRINT N'			          @schedule_name =N''DefaultCopyJobSchedule'''; 
+   PRINT N'			         ,@enabled = 1';
+   PRINT N'			         ,@freq_type = ' + @freqType; 
+   PRINT N'				 	,@freq_interval = ' + @freqInterval; 
+   PRINT N'				 	,@freq_subday_type = ' + @freqSubdayType; 
+   PRINT N'				 	,@freq_subday_interval = ' + @freqSubdayInterval; 
+   PRINT N'				 	,@freq_recurrence_factor = ' + @freqRecurrenceFactor;
+   PRINT N'				 	,@active_start_date = @currentDate';
+   PRINT N'				 	,@active_end_date = 99991231'; 
+   PRINT N'				 	,@active_start_time = 0'; 
+   PRINT N'				 	,@active_end_time = 235900'; 
+   PRINT N'				 	,@schedule_uid = @LS_SecondaryCopyJobScheduleUID OUTPUT'; 
+   PRINT N'				 	,@schedule_id = @LS_SecondaryCopyJobScheduleID OUTPUT'; 
    PRINT N'';
-   PRINT N'--Make sure the databases aren''t already configured as a secondary, are online, and are in standby/read-only';
+   PRINT N'			EXEC msdb.dbo.sp_attach_schedule ';
+   PRINT N'				      @job_id = @LS_Secondary__CopyJobId ';
+   PRINT N'				 	,@schedule_id = @LS_SecondaryCopyJobScheduleID '; 
    PRINT N'';
-   PRINT N'IF(EXISTS(';
-   PRINT N'       SELECT';
-   PRINT N'          *';
-   PRINT N'       FROM';
-   PRINT N'          master.sys.databases AS d LEFT JOIN log_shipping_secondary_databases AS lssd ON (d.name = lssd.secondary_database)';
-   PRINT N'       WHERE';
-   PRINT N'          d.name = @currentDatabase';
-   PRINT N'          AND lssd.secondary_database = NULL';
-   PRINT N'          AND d.status = ''ONLINE''';
-   PRINT N'          AND d.is_read_only = 1';
-   PRINT N'          AND d.is_in_standby = 1';
-   PRINT N'))BEGIN';       
-   PRINT N'';
-   PRINT N'EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary'; 
-   PRINT N'         @primary_server = N''' + @@SERVERNAME + N'''';  
-   PRINT N'        ,@primary_database = N''' + @originalSecondary + N'''';
-   PRINT N'        ,@backup_source_directory = N''' + @backupSourcePath + N'''';
-   PRINT N'        ,@backup_destination_directory = N''' + @backupDestinationPath + N''''; 
-   PRINT N'        ,@copy_job_name = N''LSCopy_' + lower(@@SERVERNAME) + N'_' + @databaseName + N''''; 
-   PRINT N'        ,@restore_job_name = N''LSRestore_' + lower(@@SERVERNAME) + N'_' + @databaseName + N''''; 
-   PRINT N'        ,@file_retention_period = ' + @fileRetentionPeriod;
-   PRINT N'        ,@monitor_server = N''' + @monitorServer + N'''';
-   PRINT N'        ,@monitor_server_security_mode = 1';
-   PRINT N'        ,@overwrite = 1';
-   PRINT N'        ,@copy_job_id = @LS_Secondary__CopyJobId OUTPUT';
-   PRINT N'        ,@restore_job_id = @LS_Secondary__RestoreJobId OUTPUT';
-   PRINT N'        ,@secondary_id = @LS_Secondary__SecondaryId OUTPUT';
-   PRINT N'';
-   PRINT N'IF (@@ERROR = 0 AND @LS_Add_RetCode = 0)'; 
-   PRINT N'BEGIN'; 
-   PRINT N'';
-   PRINT N'DECLARE @LS_SecondaryCopyJobScheduleUID	As uniqueidentifier'; 
-   PRINT N'DECLARE @LS_SecondaryCopyJobScheduleID	AS int'; 
-   PRINT N'';
-   PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_add_schedule';
-   PRINT N'          @schedule_name =N''DefaultCopyJobSchedule'''; 
-   PRINT N'         ,@enabled = 1';
-   PRINT N'         ,@freq_type = ' + @freqType; 
-   PRINT N'	 	,@freq_interval = ' + @freqInterval; 
-   PRINT N'	 	,@freq_subday_type = ' + @freqSubdayType; 
-   PRINT N'	 	,@freq_subday_interval = ' + @freqSubdayInterval; 
-   PRINT N'	 	,@freq_recurrence_factor = ' + @freqRecurrenceFactor;
-   PRINT N'	 	,@active_start_date = @currentDate';
-   PRINT N'	 	,@active_end_date = 99991231'; 
-   PRINT N'	 	,@active_start_time = 0'; 
-   PRINT N'	 	,@active_end_time = 235900'; 
-   PRINT N'	 	,@schedule_uid = @LS_SecondaryCopyJobScheduleUID OUTPUT'; 
-   PRINT N'	 	,@schedule_id = @LS_SecondaryCopyJobScheduleID OUTPUT'; 
-   PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_attach_schedule ';
-   PRINT N'	      @job_id = @LS_Secondary__CopyJobId ';
-   PRINT N'	 	,@schedule_id = @LS_SecondaryCopyJobScheduleID '; 
-   PRINT N'';
-   PRINT N'DECLARE @LS_SecondaryRestoreJobScheduleUID	As uniqueidentifier'; 
-   PRINT N'DECLARE @LS_SecondaryRestoreJobScheduleID	AS int'; 
+   PRINT N'			DECLARE @LS_SecondaryRestoreJobScheduleUID	As uniqueidentifier'; 
+   PRINT N'			DECLARE @LS_SecondaryRestoreJobScheduleID	AS int'; 
 
    --Get job info for the restore job
 
@@ -348,75 +355,82 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName > d.database_name
       d.database_name ASC;
 
    PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_add_schedule'; 
-   PRINT N'		 @schedule_name =N''DefaultRestoreJobSchedule'; 
-   PRINT N'	 	,@enabled = 1 ';
-   PRINT N'         ,@freq_type = ' + @freqType; 
-   PRINT N'	 	,@freq_interval = ' + @freqInterval; 
-   PRINT N'	 	,@freq_subday_type = ' + @freqSubdayType; 
-   PRINT N'	 	,@freq_subday_interval = ' + @freqSubdayInterval; 
-   PRINT N'	 	,@freq_recurrence_factor = ' + @freqRecurrenceFactor;
-   PRINT N'	 	,@active_start_date = @currentDate';
-   PRINT N'	 	,@active_end_date = 99991231 ';
-   PRINT N'	 	,@active_start_time = 0 ';
-   PRINT N'	 	,@active_end_time = 235900 ';
-   PRINT N'	 	,@schedule_uid = @LS_SecondaryRestoreJobScheduleUID OUTPUT'; 
-   PRINT N'	 	,@schedule_id = @LS_SecondaryRestoreJobScheduleID OUTPUT ';
+   PRINT N'			EXEC msdb.dbo.sp_add_schedule'; 
+   PRINT N'					 @schedule_name =N''DefaultRestoreJobSchedule'; 
+   PRINT N'				 	,@enabled = 1 ';
+   PRINT N'			         ,@freq_type = ' + @freqType; 
+   PRINT N'				 	,@freq_interval = ' + @freqInterval; 
+   PRINT N'				 	,@freq_subday_type = ' + @freqSubdayType; 
+   PRINT N'				 	,@freq_subday_interval = ' + @freqSubdayInterval; 
+   PRINT N'				 	,@freq_recurrence_factor = ' + @freqRecurrenceFactor;
+   PRINT N'				 	,@active_start_date = @currentDate';
+   PRINT N'				 	,@active_end_date = 99991231 ';
+   PRINT N'				 	,@active_start_time = 0 ';
+   PRINT N'				 	,@active_end_time = 235900 ';
+   PRINT N'				 	,@schedule_uid = @LS_SecondaryRestoreJobScheduleUID OUTPUT'; 
+   PRINT N'				 	,@schedule_id = @LS_SecondaryRestoreJobScheduleID OUTPUT ';
    PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_attach_schedule ';
-   PRINT N'		 @job_id = @LS_Secondary__RestoreJobId'; 
-   PRINT N'	 	,@schedule_id = @LS_SecondaryRestoreJobScheduleID '; 
+   PRINT N'			EXEC msdb.dbo.sp_attach_schedule ';
+   PRINT N'					 @job_id = @LS_Secondary__RestoreJobId'; 
+   PRINT N'				 	,@schedule_id = @LS_SecondaryRestoreJobScheduleID '; 
    PRINT N'';
-   PRINT N'ELSE';
-   PRINT N'    ROLLBACK TRANSACTION;'
-   PRINT N'END'; 
-   PRINT N'';
-   PRINT N'';
-   PRINT N'DECLARE @LS_Add_RetCode2	As int';
+   PRINT N'		 ELSE BEGIN';
+   PRINT N'		    PRINT N''There was an issue running master.dbo.sp_add_log_shipping_secondary_primary, quitting batch execution'';';
+   PRINT N'			RETURN;';
+   PRINT N'		 END;'; 
    PRINT N'';
    PRINT N'';
-   PRINT N'IF (@@ERROR = 0 AND @LS_Add_RetCode = 0)';
-   PRINT N'BEGIN';
+   PRINT N'		 DECLARE @LS_Add_RetCode2	As int';
    PRINT N'';
-   PRINT N'EXEC @LS_Add_RetCode2 = master.dbo.sp_add_log_shipping_secondary_database'; 
-   PRINT N'	      @secondary_database = N''' + @databaseName + N''''; 
-   PRINT N'	 	,@primary_server = N''' + @@SERVERNAME + N'''';
-   PRINT N'	 	,@primary_database = N''' + @originalSecondary + N'''';
-   PRINT N'	 	,@restore_delay = ' + @restoreDelay;
-   PRINT N'	 	,@restore_mode = ' + @restoreMode; 
-   PRINT N'	 	,@disconnect_users	= ' + @disconnectUsers;
-   PRINT N'	 	,@restore_threshold = ' + @restoreThreshold;
-   PRINT N'	 	,@threshold_alert_enabled = ' + @thresholdAlertEnabled;
-   PRINT N'	 	,@history_retention_period = ' + @historyRetentionPeriod;
-   PRINT N'	 	,@overwrite = 1';
-   PRINT N'	 	,@ignoreremotemonitor = 1';
    PRINT N'';
-   PRINT N'END'; 
-   PRINT N'ELSE BEGIN';
-   PRINT N'    PRINT N'''';';
-   PRINT N'    An error was encountered while executing master.dbo.sp_add_log_shipping_secondary_primary. Rolling back and quitting execution';
-   PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'		 IF (@@ERROR = 0 AND @LS_Add_RetCode = 0)';
+   PRINT N'		 BEGIN';
+   PRINT N'';
+   PRINT N'			  EXEC @LS_Add_RetCode2 = master.dbo.sp_add_log_shipping_secondary_database'; 
+   PRINT N'				      @secondary_database = N''' + @databaseName + N''''; 
+   PRINT N'				 	,@primary_server = N''' + @@SERVERNAME + N'''';
+   PRINT N'				 	,@primary_database = N''' + @originalSecondary + N'''';
+   PRINT N'				 	,@restore_delay = ' + @restoreDelay;
+   PRINT N'				 	,@restore_mode = ' + @restoreMode; 
+   PRINT N'				 	,@disconnect_users	= ' + @disconnectUsers;
+   PRINT N'				 	,@restore_threshold = ' + @restoreThreshold;
+   PRINT N'				 	,@threshold_alert_enabled = ' + @thresholdAlertEnabled;
+   PRINT N'				 	,@history_retention_period = ' + @historyRetentionPeriod;
+   PRINT N'				 	,@overwrite = 1';
+   PRINT N'				 	,@ignoreremotemonitor = 1';
+   PRINT N'';
+   PRINT N'		 END'; 
+   PRINT N'		 ELSE BEGIN';
+   PRINT N'			 PRINT N''An issue was encountered while configuring ' + quotename(@databaseName) + N' for logshipping. Quitting batch execution...'';';
+   PRINT N'			 RETURN;';
+   PRINT N'		 END;';
+   PRINT N'';
+   PRINT N'		 IF (@@error = 0 AND @LS_Add_RetCode = 0)'; 
+   PRINT N'		 BEGIN'; 
+   PRINT N'';
+   PRINT N'		    EXEC msdb.dbo.sp_update_job'; 
+   PRINT N'				       @job_id = @LS_Secondary__CopyJobId'; 
+   PRINT N'			 	      ,@enabled = 1'; 
+   PRINT N'';
+   PRINT N'		    EXEC msdb.dbo.sp_update_job'; 
+   PRINT N'				       @job_id = @LS_Secondary__RestoreJobId'; 
+   PRINT N'			 	      ,@enabled = 1';
+   PRINT N'';
+   PRINT N'		 ELSE BEGIN';
+   PRINT N'		    PRINT N''An issue was encountered while executing master.dbo.sp_add_log_shipping_secondary_database. Quitting batch execution...'';';
+   PRINT N'		    RETURN;';
+   PRINT N'		 END;';   
+   PRINT N'    END';
+   PRINT N'    ELSE BEGIN';
+   PRINT N'          PRINT N''' + quotename(@databaseName) + N' is already configured as a failover secondary. Skipping...'';';
+   PRINT N'    END;';
+   PRINT N'';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N''An issue was encountered while configuring ' + quotename(@databaseName) + N' for logshipping. Quitting batch execution...'';';
    PRINT N'    RETURN;';
-   PRINT N'END;';
-   PRINT N'';
-   PRINT N'';
-   PRINT N'IF (@@error = 0 AND @LS_Add_RetCode = 0)'; 
-   PRINT N'BEGIN'; 
-   PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_update_job'; 
-   PRINT N'		 @job_id = @LS_Secondary__CopyJobId'; 
-   PRINT N'	 	,@enabled = 1'; 
-   PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_update_job'; 
-   PRINT N'		 @job_id = @LS_Secondary__RestoreJobId'; 
-   PRINT N'	 	,@enabled = 1';
-   PRINT N'';
-   PRINT N'ELSE';
-   PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''An error was encountered
-   PRINT N'    ROLLBACK TRANSACTION;';
-   PRINT N'END';
+   PRINT N'END CATCH;';
    PRINT N'';
 END; 
 
-PRINT N'COMMIT TRANSACITON;';
+PRINT N'PRINT N''Failover secondary logshipping complete. Continue to Failover Secondary Monitor Script'';';

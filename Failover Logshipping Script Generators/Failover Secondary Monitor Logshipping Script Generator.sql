@@ -117,13 +117,13 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
 
 END;
 
+PRINT N'';
+PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'';
+
 --Start the actual script
 
 SET @databaseName = N'';
-
-PRINT N'';
-PRINT N'BEGIN TRANSACTION';
-PRINT N'';
 
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
 
@@ -143,22 +143,45 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    ORDER BY
       d.database_name;
 
-
-   PRINT N'PRINT N''Inserting ' + quotename(@databaseName) + N'''s logshipping configuartion'';';
-   PRINT N'PRINT N'''';';
+   PRINT N'GO';
    PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_processlogshippingmonitorsecondary'; 
-   PRINT N'		 @mode = 1'; --1 = create, 2 = delete, 3 = update
-   PRINT N'	 	,@secondary_server = N''' + @@SERVERNAME + N''''; 
-   PRINT N'	 	,@secondary_database = N''' + @databaseName + N'''';
-   PRINT N'	 	,@secondary_id = N''' + @secondaryID + N'''';
-   PRINT N'	 	,@primary_server = N''' + @primaryServer + N'''';
-   PRINT N'	 	,@primary_database = N''' + @primaryDatabase + N''''; 
-   PRINT N'	 	,@restore_threshold = ' + @restoreThreshold;
-   PRINT N'	 	,@threshold_alert = ' + @thresholdAlert;
-   PRINT N'	 	,@threshold_alert_enabled = ' + @thresholdAlertEnabled;
-   PRINT N'	 	,@history_retention_period	= ' + @historyRetentionPeriod;
-   PRINT N'	 	,@monitor_server = N''' + @monitorServer + N''''; 
-   PRINT N'	 	,@monitor_server_security_mode = 1';
+   PRINT N'BEGIN TRANSACTION';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
+   PRINT N'	PRINT N''Inserting ' + quotename(@databaseName) + N'''s logshipping configuartion'';';
+   PRINT N'	PRINT N'''';';
+   PRINT N'';
+   PRINT N'	EXEC msdb.dbo.sp_processlogshippingmonitorsecondary'; 
+   PRINT N'			 @mode = 1'; --1 = create, 2 = delete, 3 = update
+   PRINT N'		 	,@secondary_server = N''' + @@SERVERNAME + N''''; 
+   PRINT N'		 	,@secondary_database = N''' + @databaseName + N'''';
+   PRINT N'		 	,@secondary_id = N''' + @secondaryID + N'''';
+   PRINT N'		 	,@primary_server = N''' + @primaryServer + N'''';
+   PRINT N'		 	,@primary_database = N''' + @primaryDatabase + N''''; 
+   PRINT N'		 	,@restore_threshold = ' + CAST(@restoreThreshold AS VARCHAR);
+   PRINT N'		 	,@threshold_alert = ' + CAST(@thresholdAlert AS VARCHAR);
+   PRINT N'		 	,@threshold_alert_enabled = ' + CAST(@thresholdAlertEnabled AS VARCHAR);
+   PRINT N'		 	,@history_retention_period	= ' + CAST(@historyRetentionPeriod AS VARCHAR);
+   PRINT N'		 	,@monitor_server = N''' + @monitorServer + N''''; 
+   PRINT N'		 	,@monitor_server_security_mode = 1';
+   PRINT N'	    IF(@@ERROR <> 0)BEGIN';
+   PRINT N'	      PRINT N'''';';
+   PRINT N'	      PRINT N''There was an issue updating ' + quotename(@monitorServer) + N'. Rolling back and quitting batch execution...'';';
+   PRINT N'	      ROLLBACK TRANSACTION;';
+   PRINT N'	      RETURN;';
+   PRINT N'	    END;';
+   PRINT N'';
+   PRINT N'	COMMIT TRANSACTION;';
+   PRINT N'	PRINT N''Updated ' + quotename(@monitorServer) + N' successfully '';';
+   PRINT N'	PRINT N'''';';   PRINT N'';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''There was an issue updating the monitor server. Rolling back and quitting batch exeuciton...'';';
+   PRINT N'    ROLLBACK TRANSACTION';
+   PRINT N'    RETURN;';
+   PRINT N'END CATCH;';
+   PRINT N'';
 END;
-PRINT N'COMMIT TRANSACTION;';
+
+PRINT N'PRINT N''' + quotename(@monitorServer) + N' successfully updated. Failover logshipping complete'';';

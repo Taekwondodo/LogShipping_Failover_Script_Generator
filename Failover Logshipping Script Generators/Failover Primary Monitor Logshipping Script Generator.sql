@@ -6,7 +6,7 @@ Use this script to produce a T-SQL script to run on the server's monitor for log
 
 */
 
-set nocount on;
+set nocount, arithabort, xact_abort on
 go
 
 use msdb;
@@ -108,13 +108,13 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
 
 END;
 
+PRINT N'';
+PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'';
+
 --Start the actual script
 
 SET @databaseName = N'';
-
-PRINT N'';
-PRINT N'BEGIN TRANSACTION';
-PRINT N'';
 
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
 
@@ -132,7 +132,12 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    ORDER BY
       d.database_name;
 
-
+   PRINT N''
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'BEGIN TRANSACTION';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
    PRINT N'PRINT N''Inserting ' + quotename(@databaseName) + N'''''s logshipping configuartion'';';
    PRINT N'PRINT N'''';';
    PRINT N'';
@@ -150,14 +155,24 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'';
    PRINT N'    IF(@@ERROR <> 0)BEGIN';
    PRINT N'      PRINT N'''';';
-   PRINT N'      PRINT N''There was an issue inserting data. Rolling back and quitting execution...'';';
+   PRINT N'      PRINT N''There was an issue updating ' + quotename(@monitorServer) + N'. Rolling back and quitting batch execution...'';';
    PRINT N'      ROLLBACK TRANSACTION;';
    PRINT N'      RETURN;';
    PRINT N'    END;';
    PRINT N'';
-   PRINT N'PRINT N''Insertion Succeeded'';';
+   PRINT N'COMMIT TRANSACTION;';
+   PRINT N'PRINT N''Updated ' + quotename(@monitorServer) + N' successfully '';';
    PRINT N'PRINT N'''';';
    PRINT N'';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''There was an issue updating the monitor server. Rolling back and quitting batch exeuciton...'';';
+   PRINT N'    ROLLBACK TRANSACTION';
+   PRINT N'    RETURN;';
+   PRINT N'END CATCH;';
    PRINT N'';
 END;
-PRINT N'COMMIT TRANSACTION;';
+
+PRINT N' PRINT N'' *****Updating ' + quotename(@monitorServer) + N' complete*****'';';
+

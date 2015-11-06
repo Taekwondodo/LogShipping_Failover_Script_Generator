@@ -1,11 +1,12 @@
 /*
 
+Run this on the original primary server
 Use this script to produce a T-SQL script to failover all of the online logshipped databases on current server, matching filters, to the backup location specified 
 during their logshipping configurations
 
 */
 
-set nocount on;
+set nocount, arithabort, xact_abort on 
 go
 
 use master;
@@ -130,8 +131,6 @@ FROM
           SELECT 
              CAST(t1.Hours AS INT) * 3600 + CAST(t1.Minutes AS INT) * 60 + CAST(t1.Seconds AS INT) AS Total_Seconds
     )as t2
-    OUTER APPLY (
-         SELECT ISNULL(
 
 WHERE sjh.step_id = 0 
    
@@ -150,6 +149,7 @@ END;
 print N'--================================';
 print N'--';
 print N'-- Use the following script to perform a logshipping failover/failback for the following databases on ' + quotename(@@servername) + ':';
+print N'-- Run on the original primary
 print N'--';
 
 declare @databaseName   nvarchar(128)
@@ -232,11 +232,10 @@ print N'';
 print N'USE [master];';
 print N'GO';
 PRINT N'';
-PRINT N'--@job_info takes the result of the sp xp_slqagent_enum_jobs';
-PRINT N'-- xp_slqagent_enum_jobs is useful as it returns the ''running'' column which is how we''ll determine if a job is running';
+PRINT N'--#jobInfo takes the result of the sp xp_slqagent_enum_jobs';
+PRINT N'--xp_slqagent_enum_jobs is useful as it returns the ''running'' column which is how we''ll determine if a job is running';
 PRINT N'';
-PRINT N'DECLARE @retCode int';
-PRINT N'DECLARE @job_info TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
+PRINT N'DECLARE #jobInfo TABLE (job_id                UNIQUEIDENTIFIER NOT NULL,';
 PRINT N'                         last_run_date         INT              NOT NULL,';
 PRINT N'                         last_run_time         INT              NOT NULL,';
 PRINT N'                         next_run_date         INT              NOT NULL,';
@@ -250,10 +249,8 @@ PRINT N'                         current_step          INT              NOT NULL
 PRINT N'                         current_retry_attempt INT              NOT NULL,';
 PRINT N'                         job_state             INT              NOT NULL)';
 PRINT N'';
-PRINT N'BEGIN TRANSACTION;';
-PRINT N'BEGIN TRY';
 
---Iterate through the backup job ids and generate scripts to disable them
+--Iterate through the job ids and generate scripts to disable backup jobs and enable secondary jobs if failover logshipping has already been configured
 
 set @jobName = N'';
 
@@ -274,70 +271,88 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
 
    SET @avgRuntime = CAST((@totalSeconds / 3600) AS nvarchar(2)) + ':' + CAST((@totalSeconds / 60 % 60) AS nvarchar(2)) + ':' + CAST((@totalSeconds % 60) AS nvarchar(2)) 
    
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'BEGIN TRANSACTION;';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
+   PRINT N'DECLARE @retCode int';
+
    IF(@jobName LIKE '%Backup%')BEGIN
+      
       PRINT N'';
-      PRINT N'PRINT N''================================'';';
-      PRINT N'PRINT N''Disabling Logshipping backup job ' + quotename(@jobName) + N''';';
+      PRINT N'	PRINT N''================================'';';
+      PRINT N'	PRINT N''Disabling Logshipping backup job ' + quotename(@jobName) + N''';';
       PRINT N'';
       PRINT N'';
-      PRINT N'--We Make sure the jobs aren''t running to avoid issuse with premature cancelation';
+      PRINT N'	--We Make sure the jobs aren''t running to avoid issuse with premature cancelation';
       PRINT N'';
-      PRINT N'INSERT INTO @job_info';
-      PRINT N'EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
+      PRINT N'	INSERT INTO #jobInfo';
+      PRINT N'	EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
       PRINT N'';
-      PRINT N'WHILE EXISTS (SELECT * FROM @job_info as ji WHERE ji.job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N' AND ji.running <> 0)';
-      PRINT N'BEGIN';
-      PRINT N'    PRINT N''Waiting ' + @avgRuntime + N' for job to finish running' + N''';';
-      PRINT N'    WAITFOR DELAY ' + N'''' + @avgRuntime + N'''';
+      PRINT N'	WHILE EXISTS (SELECT * FROM #jobInfo as ji WHERE ji.job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N' AND ji.running <> 0)';
+      PRINT N'	BEGIN';
+      PRINT N'	    PRINT N''Waiting ' + @avgRuntime + N' for job to finish running' + N''';';
+      PRINT N'	    WAITFOR DELAY ' + N'''' + @avgRuntime + N'''';
       PRINT N'';
-      PRINT N'    DELETE FROM @job_info';
-      PRINT N'    INSERT INTO @job_info';
-      PRINT N'    EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
-      PRINT N'END;';
+      PRINT N'	    DELETE FROM #jobInfo';
+      PRINT N'	    INSERT INTO #jobInfo';
+      PRINT N'	    EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
+      PRINT N'	END;';
       PRINT N'';
-      PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N', @enabled = 0';
-      PRINT N'    IF(@retCode = 1) ';
-      PRINT N'       BEGIN';
-      PRINT N'          PRINT N''Error running sp_update_job for ' + quotename(@jobName) + N'. Rolling back and quitting execution...'';';
-      PRINT N'          ROLLBACK TRANSACTION;';
-      PRINT N'          RETURN;';
-      PRINT N'       END';
-      PRINT N'    ELSE';
-      PRINT N'       PRINT N''Backup job disabled successfully'';';
-      PRINT N'       PRINT N'''';';
+      PRINT N'	EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N', @enabled = 0';
+      PRINT N'	    IF(@retCode = 1) ';
+      PRINT N'	       BEGIN';
+      PRINT N'	          PRINT N''Error running sp_update_job for ' + quotename(@jobName) + N'. Rolling back and quitting execution...'';';
+      PRINT N'	          ROLLBACK TRANSACTION;';
+      PRINT N'	          RETURN;';
+      PRINT N'	       END';
+      PRINT N'	    ELSE';
+      PRINT N'	       COMMIT TRANSACTION;';
+      PRINT N'	       PRINT N''' + quotename(@jobName) + N' disabled successfully'';';
+      PRINT N'	       PRINT N'''';';
       PRINT N'';
    END
    ELSE BEGIN
       PRINT N'';
-      PRINT N'PRINT N''================================'';';
-      PRINT N'PRINT N''Enabling secondary job ' + quotename(@jobName) + N''';';
+      PRINT N'	PRINT N''================================'';';
+      PRINT N'	PRINT N''Enabling secondary job ' + quotename(@jobName) + N''';';
       PRINT N'';
-      PRINT N'EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N', @enabled = 1';
-      PRINT N'    IF(@retCode = 1) ';
-      PRINT N'       BEGIN';
-      PRINT N'          PRINT N''Error running sp_update_job for ' + quotename(@jobName) + N'. Rolling back and quitting execution...'';';
-      PRINT N'          ROLLBACK TRANSACTION;';
-      PRINT N'          RETURN;';
-      PRINT N'       END';
-      PRINT N'    ELSE';
-      PRINT N'       PRINT N''Secondary job enabled successfully'';';
-      PRINT N'       PRINT N'''';';
+      PRINT N'	EXEC @retCode = msdb.dbo.sp_update_job @job_id = ' + REPLACE(REPLACE(quotename(@backupJobID), '[', ''''), ']', '''') + N', @enabled = 1';
+      PRINT N'	    IF(@retCode = 1) ';
+      PRINT N'	       BEGIN';
+      PRINT N'	          PRINT N''Error enabling ' + quotename(@jobName) + N'. Rolling back and quitting execution...'';';
+      PRINT N'	          ROLLBACK TRANSACTION;';
+      PRINT N'	          RETURN;';
+      PRINT N'	       END';
+      PRINT N'	    ELSE';
+      PRINT N'	       COMMIT TRANSACTION;';
+      PRINT N'	       PRINT N''' + quotename(@jobName) + N' enabled successfully'';';
+      PRINT N'	       PRINT N'''';';
       PRINT N'';
    END;
 
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''An error was encountered while working on ' + quotename(@jobName) + N'. Rolling back and quitting execution...';
+   PRINT N'    ROLLBACK TRANSACTION';
+   PRINT N'    RETURN';
+   PRINT N'END CATCH;';
+
 END;
-PRINT N'END TRY';
-PRINT N'BEGIN CATCH';
-PRINT N'    PRINT N'''';';
-PRINT N'    PRINT N''An error was encountered while working on ' + quotename(@jobName) + N'. Rolling back and quitting execution...';
-PRINT N'    ROLLBACK TRANSACTION';
-PRINT N'    RETURN';
-PRINT N'END CATCH;';
+
 PRINT N'';
-PRINT N'COMMIT TRANSACTION;';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N''Starting failovers'';';
+PRINT N'';
+PRINT N'/*';
+PRINT N'IMPORTANT: The name given to the Transaction Tail Log Backup file is used during the secondary instance script to identify it.'
+PRINT N'If you change the name here, you''d have to it change within ''Expected Failover Script Generator Secondary Instance'' to reflect that'
+PRINT N'If you do wish to change the name, I''d recommend keeping the name so that it can be identified by ''%Trasaction Log Tail Backup'' so that you don''t have to update the secondary script';
+PRINT N'If doing so is absolutely necessary, the variable you need to update is @tailBackupName';
+PRINT N'*/';
 
 SET @databaseName = N'';
 
@@ -354,12 +369,15 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    order by
       bf.database_name;
 
-   
+   PRINT N'GO'
+   PRINT N'';
    PRINT N'PRINT N''================================'';';
    PRINT N'PRINT N''Starting Failover for ' + quotename(@databasename) + N' on ' + quotename(@@SERVERNAME) + N' at ' +  convert(nvarchar, current_timestamp, 120) + N' as ' + quotename(suser_sname()) +  N'...'';';
    PRINT N'';
    PRINT N'PRINT N''Backing up the tail of the transaction log to ' + quotename(@backupFileName) + N''';';
    PRINT N'PRINT N'''';';
+   PRINT N'';
+   PRINT N'--Make sure to read the comment in regards to changing the file name before doing so. (Search the file for ''IMPORTANT'')';
    PRINT N'';
    PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + REPLACE(REPLACE(quotename(@backupFileName), N'[',N''), N']', N'')  + N'''';
    PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Transaction Log Tail Backup''' + N', ';
@@ -369,12 +387,10 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'PRINT N''If the log backup was successful,  ' + quotename(@databasename) + N' is now in a Standby/Read-Only state.'';';
    PRINT N'PRINT N'''';';
    PRINT N'';
-   PRINT N'GO';
    PRINT N'';
-   PRINT N'';
-   
---End of script, continue to secondary instance script
-
+  
 end;
 
-PRINT N'PRINT N''Failover completed'';';
+PRINT N'PRINT N''*****Failover completed, continue to Expected Failover Script Generator Secondary Instance*****'';';
+
+--End of script, continue to secondary instance script
