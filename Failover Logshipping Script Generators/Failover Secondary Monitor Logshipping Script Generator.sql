@@ -6,11 +6,11 @@ Use this script to produce a T-SQL script to run on the server's monitor for log
 
 */
 
-set nocount on;
+set nocount, arithabort, xact_abort on
+
 go
 
 use msdb;
-go
 
 declare @databaseFilter nvarchar(128)
       , @debug          bit
@@ -99,7 +99,8 @@ SET @databaseName = N'';
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Run on ' + quotename(@monitorServer);
+PRINT N'-- *****RUN ' + quotename(@monitorServer) + N'*****';
+PRINT N'--';
 PRINT N'-- Use the following script to update monitor server ' + quotename(@monitorServer) + N' with the new failover secondary logshipping configurations of the following databases on ' + quotename(@@SERVERNAME) + N':';
 PRINT N'--';
 
@@ -118,13 +119,14 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
 
 END;
 
+PRINT N'';
+PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'';
+PRINT N'SET nocount, arithabort, xact_abort on';
+
 --Start the actual script
 
 SET @databaseName = N'';
-
-PRINT N'';
-PRINT N'BEGIN TRANSACTION';
-PRINT N'';
 
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
 
@@ -144,33 +146,48 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    ORDER BY
       d.database_name;
 
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'BEGIN TRANSACTION';
    PRINT N'BEGIN TRY';
    PRINT N'';
-   PRINT N'PRINT N''Inserting ' + quotename(@databaseName) + N'''''s logshipping configuartion'';';
+   PRINT N'    PRINT N''Inserting ' + quotename(@databaseName) + N'''s logshipping configuartion'';';
+   PRINT N'    PRINT N'''';';
    PRINT N'';
-   PRINT N'EXEC msdb.dbo.sp_processlogshippingmonitorsecondary'; 
-   PRINT N'		 @mode = 1 --1 = create, 2 = delete, 3 = update';
-   PRINT N'	 	,@secondary_server = N''' + @@SERVERNAME + N''''; 
-   PRINT N'	 	,@secondary_database = N''' + @databaseName + N'''';
-   PRINT N'	 	,@secondary_id = N''' + @secondaryID + N'''';
-   PRINT N'	 	,@primary_server = N''' + @primaryServer + N'''';
-   PRINT N'	 	,@primary_database = N''' + @primaryDatabase + N''''; 
-   PRINT N'	 	,@restore_threshold = ' + @restoreThreshold;
-   PRINT N'	 	,@threshold_alert = ' + @thresholdAlert;
-   PRINT N'	 	,@threshold_alert_enabled = ' + @thresholdAlertEnabled;
-   PRINT N'	 	,@history_retention_period	= ' + @historyRetentionPeriod;
-   PRINT N'	 	,@monitor_server = N''' + @monitorServer + N''''; 
-   PRINT N'	 	,@monitor_server_security_mode = 1';
+   PRINT N'    EXEC msdb.dbo.sp_processlogshippingmonitorsecondary'; 
+   PRINT N'		     @mode = 1 --1 = create, 2 = delete, 3 = update';
+   PRINT N'	 	    ,@secondary_server = N''' + @@SERVERNAME + N''''; 
+   PRINT N'	 	    ,@secondary_database = N''' + @databaseName + N'''';
+   PRINT N'	 	    ,@secondary_id = N''' + @secondaryID + N'''';
+   PRINT N'	 	    ,@primary_server = N''' + @primaryServer + N'''';
+   PRINT N'	 	    ,@primary_database = N''' + @primaryDatabase + N''''; 
+   PRINT N'	 	    ,@restore_threshold = ' + @restoreThreshold;
+   PRINT N'	 	    ,@threshold_alert = ' + @thresholdAlert;
+   PRINT N'	 	    ,@threshold_alert_enabled = ' + @thresholdAlertEnabled;
+   PRINT N'	 	    ,@history_retention_period = ' + @historyRetentionPeriod;
+   PRINT N'	 	    ,@monitor_server = N''' + @monitorServer + N''''; 
+   PRINT N'	 	    ,@monitor_server_security_mode = 1';
+   PRINT N'';
+   PRINT N'        IF(@@ERROR <> 0)BEGIN';
+   PRINT N'          PRINT N'''';';
+   PRINT N'          PRINT N''There was an issue updating ' + quotename(@monitorServer) + N'. Rolling back and quitting batch execution...'';';
+   PRINT N'          ROLLBACK TRANSACTION;';
+   PRINT N'          RETURN;';
+   PRINT N'        END;';
+   PRINT N'';
+   PRINT N'    COMMIT TRANSACTION;';
+   PRINT N'    PRINT N''Updated ' + quotename(@monitorServer) + N' successfully '';';
+   PRINT N'    PRINT N'''';'; 
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''An error occurred while executing sp_processlogshippingmonitorsecondary for ' + quotename(@databaseName) + N'. Rolling back and quitting execution...'';';
-   PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    PRINT N''There was an issue updating the monitor server. Rolling back and quitting batch exeuciton...'';';
+   PRINT N'    ROLLBACK TRANSACTION';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
-   PRINT N'PRINT N''' + quotename(@databaseName) + N' successfully inserted'';';
-   PRINT N'PRINT N'''';';
 END;
-PRINT N'PRINT N''All databases successfully inserted'';';
-PRINT N'COMMIT TRANSACTION;';
+
+PRINT N'PRINT N''' + quotename(@monitorServer) + N' successfully updated. Failover logshipping complete'';';
+
+
