@@ -33,19 +33,22 @@ declare @databases table (
   ,database_name    nvarchar(128) not null 
   ,copy_job_id      uniqueidentifier not null
   ,restore_job_id   uniqueidentifier not null
+  ,backup_job_id    uniqueidentifier null
 );
 insert into @databases (
    database_name
   ,secondary_id
   ,copy_job_id
   ,restore_job_id
+  ,backup_job_id
 )
 select
-   lssd.secondary_database as database_name, lssd.secondary_id as secondary_id, lss.copy_job_id, lss.restore_job_id
+   lssd.secondary_database as database_name, lssd.secondary_id as secondary_id, lss.copy_job_id, lss.restore_job_id, lspd.backup_job_id as backup_job_id
 from
    msdb.dbo.log_shipping_secondary_databases AS lssd 
    LEFT JOIN sys.databases AS d ON (lssd.secondary_database = d.name)
    LEFT JOIN msdb.dbo.log_shipping_secondary AS lss  ON (lssd.secondary_id = lss.secondary_id)
+   LEFT JOIN msdb.dbo.log_shipping_primary_databases AS lspd ON (lssd.secondary_database = lspd.primary_database)
 --
 --We don't want a db if it is offline, already restored, or if it matches our filter
 --
@@ -59,7 +62,7 @@ order by
    lssd.secondary_database;
 
 IF NOT EXISTS(SELECT * FROM @databases)
-   PRINT N'There are no selected databases configured for logshipping as a secondary database';
+   PRINT N'There are no selected databases configured for logshipping as a secondary database, online, and restored';
 
 select
    @databaseFilter as DatabaseFilter
@@ -97,8 +100,8 @@ SELECT
 FROM
     @databases AS td 
     LEFT JOIN sys.databases AS d ON (td.database_name = d.name)
-    RIGHT JOIN msdb.dbo.sysjobs AS sj ON (td.copy_job_id = sj.job_id OR td.restore_job_id = sj.job_id) 
-    RIGHT JOIN msdb.dbo.sysjobhistory AS sjh ON (sjh.job_id = sj.job_id)
+    LEFT JOIN msdb.dbo.sysjobs AS sj ON (td.copy_job_id = sj.job_id OR td.restore_job_id = sj.job_id OR td.backup_job_id = sj.job_id) 
+    LEFT JOIN msdb.dbo.sysjobhistory AS sjh ON (sjh.job_id = sj.job_id)
     OUTER APPLY (
          SELECT
             RIGHT('000000' + CAST(sjh.run_duration AS varchar(12)), 2) AS Seconds
@@ -108,15 +111,12 @@ FROM
     OUTER APPLY (
           SELECT 
              CAST(t1.Hours AS INT) * 3600 + CAST(t1.Minutes AS INT) * 60 + CAST(t1.Seconds AS INT) AS Total_Seconds
-    )as t2
-              
---We don't want a job that isn't enabled
+    )as t2          
 
 WHERE sjh.step_id = 0 
-      AND sj.enabled = 1
       AND (d.state_desc = N'ONLINE')
       AND ((@databaseFilter is null) OR (d.name like N'%' + @databaseFilter + N'%'))
-      AND td.database_name IS NOT NULL --this is here to filter out jobs within sysjobs that we don't want since all jobs are included with the right join to sysjobs
+      
 
 GROUP BY sj.job_id;
 
@@ -130,19 +130,12 @@ END;
 
 --================================
 
-PRINT N'--================================';
-PRINT N'--';
-PRINT N'-- Use the following script to failover to the following databases, disabling their secondary instance jobs on ' + quotename(@@servername) + ':';
-PRINT N'-- Run on the original secondary';
-PRINT N'--';
-
 DECLARE @databaseName     nvarchar(128)
        ,@secondaryID      nvarchar(60)
        ,@copyJobName      nvarchar(128)
        ,@restoreJobName   nvarchar(128)
-       ,@copyID           uniqueidentifier
+       ,@backupJobName    nvarchar(128)
        ,@tailBackupName   nvarchar(128) --Used to ensure that the copy/restore jobs successfully apply the transaction log tail backup to their respective databases 
-       ,@restoreID        uniqueidentifier    
        ,@maxlenDB         int
        ,@maxlenJob        int
 
@@ -150,6 +143,12 @@ SET @databaseName = N'';
 SET @tailBackupName = N'%Transaction Log Tail Backup';
 SET @maxlenDB = (select max(datalength(j.target_database)) from @jobs as j);
 SET @maxlenJob = (select max(datalength(j.job_name)) from @jobs as j);
+
+PRINT N'--================================';
+PRINT N'--';
+PRINT N'-- Use the following script to failover to the following databases on ' + quotename(@@servername) + N', disabling their secondary instance jobs' + ':';
+PRINT N'-- Run on the original secondary';
+PRINT N'--';
 
 WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
 
@@ -159,16 +158,39 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
      ,@restoreJobName = j2.job_name 
    FROM
       @databases AS d LEFT JOIN @jobs AS j ON (d.copy_job_id = j.job_id)
-      LEFT JOIN @jobs as j2 ON(d.restore_job_id = j2.job_id)
+      LEFT JOIN @jobs as j2 ON (d.restore_job_id = j2.job_id)
 
    WHERE 
       d.database_name > @databaseName
 
    ORDER BY d.database_name ASC;
 
-   PRINT N'-- ' + LEFT(@databaseName + REPLICATE(N' ', @maxlenDB / 2), @maxlenDB / 2) + N'    ' + LEFT(@copyJobName + REPLICATE(N' ', @maxlenJob / 2), @maxlenJob / 2) + N'    ' + @restoreJobName ;
+   PRINT N'-- ' + LEFT(quotename(@databaseName) + REPLICATE(N' ', @maxlenDB / 2), @maxlenDB / 2) + N'    ' + LEFT(quotename(@copyJobName) + REPLICATE(N' ', @maxlenJob / 2), @maxlenJob / 2) + N'    ' + quotename(@restoreJobName) ;
 
 END;     
+
+PRINT N'--';
+PRINT N'-- And enabling the following backup jobs (if a database is already configured as a logshipping primary):';
+PRINT N'--';
+
+set @databaseName = N'';
+
+WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
+
+   SELECT TOP 1
+       @databaseName = d.database_name
+      ,@backupJobName = j.job_name
+   FROM
+      @databases AS d LEFT JOIN @jobs AS j ON (d.backup_job_id = j.job_id)
+
+   WHERE 
+      d.database_name > @databaseName
+
+   ORDER BY d.database_name ASC;
+
+   PRINT N'-- ' + quotename(@backupJobName)
+
+END;    
 
 PRINT N'--';
 PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
@@ -186,7 +208,7 @@ PRINT N'';
 PRINT N'--Drop the table if it exists';
 PRINT N'';
 PRINT N'IF OBJECT_ID(''tempdb.dbo.#backupInfo'', ''U'') IS NOT NULL';
-PRINT N'    DROP TABLE #jobInfo';
+PRINT N'    DROP TABLE #backupInfo';
 PRINT N'';
 PRINT N'CREATE TABLE #backupInfo (BackupName nvarchar(128),';
 PRINT N' 						BackupDescription nvarchar(255),';
@@ -248,7 +270,7 @@ PRINT N'--Drop the table if it exists';
 PRINT N'IF OBJECT_ID(''tempdb.dbo.#jobInfo'', ''U'') IS NOT NULL';
 PRINT N'    DROP TABLE #jobInfo';
 PRINT N'';
-PRINT N'CREATE TABLE #job_info (job_id                UNIQUEIDENTIFIER NOT NULL,';
+PRINT N'CREATE TABLE #jobInfo (job_id                UNIQUEIDENTIFIER NOT NULL,';
 PRINT N'                         last_run_date         INT              NOT NULL,';
 PRINT N'                         last_run_time         INT              NOT NULL,';
 PRINT N'                         next_run_date         INT              NOT NULL,';
@@ -300,49 +322,74 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'BEGIN TRY';  
    PRINT N'';
    PRINT N'    DECLARE @retcode int';
-   PRINT N'';
-   PRINT N'    PRINT N''================================'';';
-   PRINT N'    PRINT N''Disabling ' + quotename(@jobName) + N''';';
-   PRINT N'';
-   PRINT N'    --We Make sure the jobs aren''t running to avoid issuse with premature cancelation since they''re cmd commands';
-   PRINT N'	';
-   PRINT N'    DELETE FROM #jobInfo';
-   PRINT N'	INSERT INTO #jobInfo';
-   PRINT N'	EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
-   PRINT N'	';
-   PRINT N'	WHILE EXISTS (SELECT * FROM #jobInfo as ji WHERE ji.job_id = ''' + @jobID + N''' AND ji.running <> 0)';
-   PRINT N'	BEGIN';
-   PRINT N'	    PRINT N''Waiting ' + @avgRuntime + N' for job to finish running' + N''';';
-   PRINT N'	    WAITFOR DELAY ' + N'''' + @avgRuntime + N'''';
-   PRINT N'	';
-   PRINT N'	    DELETE FROM #jobInfo';
-   PRINT N'	    INSERT INTO #jobInfo';
-   PRINT N'	    EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
-   PRINT N'	END;';
-   PRINT N'	';
+   
+   IF (@jobName LIKE N'%Backup%')BEGIN
+
+      PRINT N'';
+      PRINT N'    PRINT N''================================'';';
+      PRINT N'	   PRINT N''Enabling backup job ' + quotename(@jobName) + N''';';
+      PRINT N'';
+      PRINT N'	   EXEC @retcode = msdb.dbo.sp_update_job @job_name = ''' + @jobName + N''', @enabled = 1';
+      PRINT N'	      IF(@retcode = 1) ';
+      PRINT N'	         BEGIN';
+      PRINT N'	            PRINT N''Error enabling ' + quotename(@jobName) + N'. Rolling back and quitting batch execution...'';';
+      PRINT N'	            ROLLBACK TRANSACTION;';
+      PRINT N'	            RETURN;';
+      PRINT N'	         END';
+      PRINT N'	      ELSE';
+      PRINT N'	         COMMIT TRANSACTION;';
+      PRINT N'	         PRINT N''' + quotename(@jobName) + N' enabled successfully'';';
+      PRINT N'	         PRINT N'''';';
+      PRINT N'';
+
+   END
+   ELSE BEGIN
+      PRINT N'';
+      PRINT N'    PRINT N''================================'';';
+      PRINT N'    PRINT N''Disabling ' + quotename(@jobName) + N''';';
+      PRINT N'';
+      PRINT N'    --We Make sure the jobs aren''t running to avoid issuse with premature cancelation since they''re cmd commands';
+      PRINT N'	';
+      PRINT N'    DELETE FROM #jobInfo';
+      PRINT N'	   INSERT INTO #jobInfo';
+      PRINT N'	   EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
+      PRINT N'	';
+      PRINT N'	   WHILE EXISTS (SELECT * FROM #jobInfo as ji WHERE ji.job_id = ''' + @jobID + N''' AND ji.running <> 0)';
+      PRINT N'	   BEGIN';
+      PRINT N'	      PRINT N''Waiting ' + @avgRuntime + N' for job to finish running' + N''';';
+      PRINT N'	      WAITFOR DELAY ' + N'''' + @avgRuntime + N'''';
+      PRINT N'	';
+      PRINT N'	      DELETE FROM #jobInfo';
+      PRINT N'	      INSERT INTO #jobInfo';
+      PRINT N'	      EXEC xp_sqlagent_enum_jobs 1, ''dbo''';
+      PRINT N'	   END;';
+      PRINT N'	';
 
    --Attempting to disable a job that is already disabled is not an issue
+      
+      PRINT N'	   EXEC @retcode = msdb.dbo.sp_update_job @job_name = ''' + @jobName + N''', @enabled = 0';
+      PRINT N'	    IF(@retcode = 1) ';
+      PRINT N'	       BEGIN';
+      PRINT N'	          --You''ll notice these empty print statements before error messages, they are a workaround for print messages not being outputted';
+      PRINT N'	          --when a rollback is performed after them. Not sure why it happens, but others have experienced this as well';
+      PRINT N'	          PRINT N'''';';
+      PRINT N'	          PRINT N''Error disabling ' + quotename(@jobName) + N' Rolling back...'';';
+      PRINT N'	          ROLLBACK TRANSACTION;';
+      PRINT N'	          RETURN;';
+      PRINT N'	       END';
+      PRINT N'	       ELSE BEGIN';
+      PRINT N'	          COMMIT TRANSACTION;'
+      PRINT N'	          PRINT N''Job disabled successfully'';';
+      PRINT N'	          PRINT N'''';';
+      PRINT N'	       END;';
+      PRINT N'';
+   END;
 
-   PRINT N'	    IF(@retCode = 1) ';
-   PRINT N'	       BEGIN';
-   PRINT N'	          --You''ll notice these empty print statements before error messages, they are a workaround for print messages not being outputted';
-   PRINT N'	          --when a rollback is performed after them. Not sure why it happens, but others have experienced this as well';
-   PRINT N'	          PRINT N'''';';
-   PRINT N'	          PRINT N''Error disabling ' + quotename(@jobName) + N' Rolling back...'';';
-   PRINT N'	          ROLLBACK TRANSACTION;';
-   PRINT N'	          RETURN;';
-   PRINT N'	       END';
-   PRINT N'	    ELSE BEGIN';
-   PRINT N'	       COMMIT TRANSACTION;'
-   PRINT N'	       PRINT N''Job disabled successfully'';';
-   PRINT N'	       PRINT N'''';';
-   PRINT N'	    END;';
-   PRINT N'';
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''There was an error stopping/disabling ' + quotename(@jobName) + N'. Rolling back and quitting execution...'';';
+   PRINT N'    PRINT N''There was an error while working on ' + quotename(@jobName) + N'. Rolling back and quitting batch execution...'';';
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
@@ -364,8 +411,6 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
      ,@secondaryID = d.secondary_id
      ,@copyJobName = j.job_name     
      ,@restoreJobName = j2.job_name 
-     ,@copyID = d.copy_job_id --remove the ids if they aren't used
-     ,@restoreID  = d.restore_job_id 
    FROM
       @databases AS d LEFT JOIN @jobs AS j ON (d.copy_job_id = j.job_id)
       LEFT JOIN @jobs AS j2 ON (d.restore_job_id = j2.job_id)
@@ -378,14 +423,15 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'';
    PRINT N'--Run the copy job';
    PRINT N'';
+   PRINT N'PRINT N''=================================='';';
    PRINT N'PRINT N''Running jobs for ' + quotename(@databaseName) + N'. Starting copy job...'';';
    PRINT N'';
    PRINT N'BEGIN TRANSACTION;';
    PRINT N'BEGIN TRY';
    PRINT N'';
-   PRINT N'DECLARE @retcode int';
-   PRINT N'       ,@lastCopiedFile     nvarchar(500)';
-   PRINT N'       ,@backupInfoCommand  nvarchar(1100)';
+   PRINT N'    DECLARE @retcode int';
+   PRINT N'           ,@lastCopiedFile     nvarchar(500)';
+   PRINT N'           ,@backupInfoCommand  nvarchar(1100)';
    PRINT N'';
    PRINT N'	EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @copyJobName + N'''';
    PRINT N'	    IF(@retcode <> 0) BEGIN';
@@ -463,78 +509,67 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	)'
    PRINT N'	EXEC sp_executesql @backupInfoCommand';
    PRINT N'';
+   PRINT N'    --If the log was copied over run the restore job';
+   PRINT N'';
    PRINT N'	IF(EXISTS(SELECT * FROM #backupInfo AS bi WHERE bi.backupName LIKE ''' + @tailBackupName + N'''))BEGIN';
-   PRINT N'	    COMMIT TRANSACTION;';
    PRINT N'	    PRINT N''Copy job successfully copied the Transaction Log Tail Backup. Starting restore job...'';';
    PRINT N'	    DELETE FROM #backupInfo;';
-   PRINT N'	END';
-   PRINT N'	ELSE BEGIN';
-   PRINT N'	    PRINT N'''';';
-   PRINT N'	    PRINT N''' + quotename(@copyJobName) + N' did not copy over the Transaction Log Tail Backup. Check to make sure the file name follows the same format'';';
-   PRINT N'	    PRINT N''as the backups output by the jobs themselves. This includes being in UTC. Rolling Back and quitting execution...'';';
-   PRINT N'	    ROLLBACK TRANSACTION;';
-   PRINT N'	    RETURN;';
-   PRINT N'	END;';
    PRINT N'';
-   PRINT N'END TRY';
-   PRINT N'BEGIN CATCH';
-   PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''And error was encountered while running/checking copy job ' + quotename(@copyJobName) + N'. Rolling Back and quitting execution...'';';
-   PRINT N'    ROLLBACK TRANSACTION;';
-   PRINT N'    RETURN;';
-   PRINT N'END CATCH;';
+   PRINT N'        --Run restore job';
    PRINT N'';
-   PRINT N'--Run restore job';
-   PRINT N'';
-   PRINT N'GO';
-   PRINT N'';
-   PRINT N'BEGIN TRANSACTION;';
-   PRINT N'BEGIN TRY';
-   PRINT N'';
-   PRINT N'DECLARE @retcode int';
-   PRINT N'';
-   PRINT N'	EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @restoreJobName + N'''';
-   PRINT N'	    IF (@retcode <> 0) BEGIN';
-   PRINT N'	       PRINT N'''';';
-   PRINT N'	       PRINT N''Error running ' + quotename(@restoreJobName) + N'. Rolling back...'';';
-   PRINT N'	       ROLLBACK TRANSACTION;';
-   PRINT N'	       RETURN;';
-   PRINT N'	    END;';
+   PRINT N'	    EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @restoreJobName + N'''';
+   PRINT N'	 	    IF (@retcode <> 0) BEGIN';
+   PRINT N'	 	       PRINT N'''';';
+   PRINT N'	 	       PRINT N''Error running ' + quotename(@restoreJobName) + N'. Rolling back...'';';
+   PRINT N'	 	       ROLLBACK TRANSACTION;';
+   PRINT N'	 	       RETURN;';
+   PRINT N'	 	    END;';
    PRINT N'';
 
    --Check to make sure the transaction log tail backup was restored
 
-   PRINT N'	--Make sure the Transaction Log Tail Backup was restored'
+   PRINT N'	 	--Make sure the Transaction Log Tail Backup was restored'
    PRINT N'';
-   PRINT N'	IF (EXISTS(';
-   PRINT N'	    SELECT TOP 1';
-   PRINT N'	       *';
-   PRINT N'	    FROM';
-   PRINT N'	       msdb.dbo.backupset AS b';
-   PRINT N'	    WHERE';
-   PRINT N'	       b.database_name = ''' + @databaseName + N''''; 
-   PRINT N'	       AND b.name LIKE ''' + @tailBackupName + N''''; 
-   PRINT N'	    ORDER BY';
-   PRINT N'	       backup_set_id DESC';
-   PRINT N'	    ))';
-   PRINT N'	BEGIN';
-   PRINT N'	    COMMIT TRANSACTION;';
-   PRINT N'	    PRINT N''Transaction Log Tail Backup successfully restored.'';';
+   PRINT N'	 	IF (EXISTS(';
+   PRINT N'	 	    SELECT';
+   PRINT N'	 	       *';
+   PRINT N'	 	    FROM';
+   PRINT N'	 	      msdb.dbo.log_shipping_secondary_databases AS lssd';
+   PRINT N'	 	    WHERE';
+   PRINT N'	 	       lssd.secondary_database = ''' + @databaseName + N''''; 
+   PRINT N'	 	       AND lssd.last_restored_file = @lastCopiedFile';
+   PRINT N'	 	    ))';
+   PRINT N'	 	BEGIN';
+   PRINT N'	 	    COMMIT TRANSACTION;';
+   PRINT N'	 	    PRINT N''Transaction Log Tail Backup successfully restored.'';';
+   PRINT N'	 	END';
+   PRINT N'	 	ELSE BEGIN';
+   PRINT N'	 	    PRINT N'''';';
+   PRINT N'	 	    PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...'';';
+   PRINT N'	 	    ROLLBACK TRANSACTION;';
+   PRINT N'	 	    RETURN;';
+   PRINT N'	 	END;';   
+   PRINT N'';
    PRINT N'	END';
    PRINT N'	ELSE BEGIN';
    PRINT N'	    PRINT N'''';';
-   PRINT N'	    PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...'';';
+   PRINT N'        PRINT N'''';';
+   PRINT N'	    PRINT N''' + quotename(@copyJobName) + N' did not copy over the Transaction Log Tail Backup. Check to make sure the file name follows the same format'';';
+   PRINT N'	    PRINT N''as the backups output by the jobs themselves. This includes being in UTC. Rolling Back and quitting execution...'';';
+   PRINT N'        PRINT N'''';';
    PRINT N'	    ROLLBACK TRANSACTION;';
    PRINT N'	    RETURN;';
    PRINT N'	END;';
+   PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''An error was encountered while running/checking restore job' + quotename(@restoreJobName) + N'. Rolling Back and quitting execution...'';';
+   PRINT N'    PRINT N''And error was encountered while running/checking job ' + quotename(@copyJobName) + N'. Rolling Back and quitting batch execution...'';';
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
-   PRINT N''
+   PRINT N'';
+   
 END;
 
 
@@ -542,7 +577,7 @@ SET @databaseName = N'';
 
 PRINT N'--Now we restore the databases';
 PRINT N'';
-
+/*
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
 
    SELECT TOP 1 
@@ -570,8 +605,9 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'END CATCH;';
    PRINT N'';
 END;
+*/
 
-PRINT N'DROP TABLE tempdb.dbo.#backupInfo, tempdb.dbo.#jobInfo';
+PRINT N'DROP TABLE #backupInfo, #jobInfo';
 PRINT N'PRINT N''*****Failover to ' + quotename(@@SERVERNAME) + N' complete. Begin failover logshipping if necessary*****'';';
 
 --End of script, begin failover logshipping if necessary

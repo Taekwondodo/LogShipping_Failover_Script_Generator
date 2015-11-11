@@ -37,31 +37,17 @@ if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\'
 
 declare @backup_files table (
    database_name    nvarchar(128) not null primary key clustered
- , backup_file_name nvarchar(260)
- , standby_file_name nvarchar(260)
 );
 
 insert into @backup_files (
    database_name
- , backup_file_name
- , standby_file_name
 )
 --Changed the format of {backupTime} to include milliseconds so it will fit the formatting of the other logshipping files
 --After some testing I found that it is in fact necessary to have the formatting this way. A .trn file that left out the seconds and milliseconds was not
 --found by the secondary copy job. A later backup with the necessary seconds and milliseconds was found, however. This may be due to the restore job using the datetime
 --as logging information
 select
-   pd.primary_database      as database_name
- , replace(replace(replace(
-      N'{backup_path}{database_name}_{backupTime}.trn'
-    , N'{backup_path}', @backupFilePath)
-    , N'{database_name}', pd.primary_database)
-    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), GETUTCDATE(), 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS backup_file_name
-, replace(replace(replace(
-      N'{backup_path}{database_name}_{backupTime}.ldf'
-    , N'{backup_path}', @backupFilePath)
-    , N'{database_name}', pd.primary_database)
-    , N'{backupTime}', replace(replace(replace(replace(convert(nvarchar(19), GETUTCDATE(), 121), N'-', N''), N':', N''),N'.', N''), N' ', N'')) AS standby_file_name
+   pd.primary_database as database_name
 from
    msdb.dbo.log_shipping_primary_databases AS pd left JOIN sys.databases as d ON (pd.primary_database = d.name)
 --
@@ -157,8 +143,6 @@ print N'-- Use the following script to perform a logshipping failover/failback f
 print N'--';
 
 declare @databaseName   nvarchar(128)
-      , @backupFileName nvarchar(260)
-      , @standbyFileName nvarchar(260)
       , @maxLen         int
       , @backupJobID    uniqueidentifier
       , @jobName        nvarchar(128)
@@ -180,7 +164,7 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    order by
       bf.database_name;
 
-   print N'--    ' + left(@databaseName + replicate(N' ', @maxLen / 2), @maxLen / 2) + N'   ' + @backupFileName;
+   print N'--    ' + quotename(@databaseName);
 end;
 
 PRINT N'--';
@@ -227,10 +211,14 @@ WHILE EXISTS(SELECT * FROM @jobs AS j WHERE j.job_name > @jobName AND j.job_name
 
 END;
 
+print N'-- Note: The transaction log tail backup filenames cannot be determined until the script is ran. This is due to how logshipping determines which';
+print N'-- files to locate and copy/restore based on the UTC timestamp contained within the filename.';
 print N'--';
 print N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
 print N'--';
 print N'--================================';
+
+raiserror('flushing buffer',0,1) WITH NOWAIT; --flush print buffer
 
 print N'';
 print N'USE [master];';
@@ -263,6 +251,8 @@ PRINT N'                         job_state             INT              NOT NULL
 PRINT N'';
 
 --Iterate through the job ids and generate scripts to disable backup jobs and enable secondary jobs if failover logshipping has already been configured
+
+raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 set @jobName = N'';
 
@@ -353,6 +343,7 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'    RETURN';
    PRINT N'END CATCH;';
 
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
 PRINT N'';
@@ -384,6 +375,20 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
 
    PRINT N'GO'
    PRINT N'';
+   PRINT N'--Get the full transaction log tail backup path, along with the standby path (which will be named identically apart for the file extension)';
+   PRINT N'';
+   PRINT N'DECLARE @backupFileName   nvarchar(500)';
+   PRINT N'       ,@standbyFileName  nvarchar(500);';
+   PRINT N'';
+   PRINT N'SET @backupFileName = replace(replace(replace(';
+   PRINT N'   N''{backup_path}{database_name}_{backupTime}.trn''';
+   PRINT N'  ,N''{backup_path}'', N''' + @backupFilePath + N''')';
+   PRINT N'  ,N''{database_name}'', ' + @databaseName + N''')';
+   PRINT N'  ,N''{backupTime}'', replace(replace(replace(replace(convert(nvarchar(19), GETUTCDATE(), 121), N''-'', N''''), N'':'', N''''),N''.'', N''''), N'' '', N''''))';
+   PRINT N'';
+   PRINT N'SET @standbyFileName = replace(@backupFileName, N''.trn'', N''.ldf'');';
+   PRINT N'';
+   PRINT N'';
    PRINT N'PRINT N''================================'';';
    PRINT N'PRINT N''Starting Failover for ' + quotename(@databasename) + N' on ' + quotename(@@SERVERNAME) + N' at ' +  convert(nvarchar, current_timestamp, 120) + N' as ' + quotename(suser_sname()) +  N'...'';';
    PRINT N'';
@@ -402,6 +407,7 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'';
    PRINT N'';
   
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 end;
 
 PRINT N'DROP TABLE #jobInfo';
