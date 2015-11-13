@@ -42,10 +42,6 @@ declare @backup_files table (
 insert into @backup_files (
    database_name
 )
---Changed the format of {backupTime} to include milliseconds so it will fit the formatting of the other logshipping files
---After some testing I found that it is in fact necessary to have the formatting this way. A .trn file that left out the seconds and milliseconds was not
---found by the secondary copy job. A later backup with the necessary seconds and milliseconds was found, however. This may be due to the restore job using the datetime
---as logging information
 select
    pd.primary_database as database_name
 from
@@ -139,7 +135,7 @@ END;
 print N'--================================';
 print N'--*****RUN ON ' + quotename(@@SERVERNAME) + N'*****';
 print N'--';
-print N'-- Use the following script to perform a logshipping failover/failback for the following databases on ' + quotename(@@servername) + ':';
+print N'-- Use the following script to perform a logshipping failover/failback for the following databases on ' + quotename(@@servername) + N' with backup directory ' + @backupFilePath + N':';
 print N'--';
 
 declare @databaseName   nvarchar(128)
@@ -156,7 +152,6 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
 
    select top 1
       @databaseName = bf.database_name
-    , @backupFileName = bf.backup_file_name
    from
       @backup_files as bf
    where
@@ -195,7 +190,7 @@ PRINT N'--';
 
 set @jobName = N'';
 
-WHILE EXISTS(SELECT * FROM @jobs AS j WHERE j.job_name > @jobName AND j.job_name NOT LIKE '%Backup') BEGIN
+WHILE EXISTS(SELECT * FROM @jobs AS j WHERE j.job_name > @jobName AND j.job_name NOT LIKE '%Backup%') BEGIN
 
    SELECT TOP 1
       @jobName = j.job_name
@@ -211,6 +206,7 @@ WHILE EXISTS(SELECT * FROM @jobs AS j WHERE j.job_name > @jobName AND j.job_name
 
 END;
 
+print N'--';
 print N'-- Note: The transaction log tail backup filenames cannot be determined until the script is ran. This is due to how logshipping determines which';
 print N'-- files to locate and copy/restore based on the UTC timestamp contained within the filename.';
 print N'--';
@@ -218,7 +214,7 @@ print N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N'
 print N'--';
 print N'--================================';
 
-raiserror('flushing buffer',0,1) WITH NOWAIT; --flush print buffer
+raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 print N'';
 print N'USE [master];';
@@ -358,14 +354,13 @@ PRINT N'If you do wish to change the name, I''d recommend keeping the name so th
 PRINT N'If doing so is absolutely necessary, the variable you need to update is @tailBackupName';
 PRINT N'*/';
 
+
 SET @databaseName = N'';
 
 while exists(select * from @backup_files as bf where bf.database_name > @databaseName) begin
 
    select top 1
       @databaseName = bf.database_name
-    , @backupFileName = replace(bf.backup_file_name, N'''', N'''''')
-    , @standbyFileName = replace(bf.standby_file_name, N'''', N'''''')
    from
       @backup_files as bf
    where
@@ -383,7 +378,7 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'SET @backupFileName = replace(replace(replace(';
    PRINT N'   N''{backup_path}{database_name}_{backupTime}.trn''';
    PRINT N'  ,N''{backup_path}'', N''' + @backupFilePath + N''')';
-   PRINT N'  ,N''{database_name}'', ' + @databaseName + N''')';
+   PRINT N'  ,N''{database_name}'', N''' + @databaseName + N''')';
    PRINT N'  ,N''{backupTime}'', replace(replace(replace(replace(convert(nvarchar(19), GETUTCDATE(), 121), N''-'', N''''), N'':'', N''''),N''.'', N''''), N'' '', N''''))';
    PRINT N'';
    PRINT N'SET @standbyFileName = replace(@backupFileName, N''.trn'', N''.ldf'');';
@@ -392,20 +387,21 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'PRINT N''================================'';';
    PRINT N'PRINT N''Starting Failover for ' + quotename(@databasename) + N' on ' + quotename(@@SERVERNAME) + N' at ' +  convert(nvarchar, current_timestamp, 120) + N' as ' + quotename(suser_sname()) +  N'...'';';
    PRINT N'';
-   PRINT N'PRINT N''Backing up the tail of the transaction log to ' + quotename(@backupFileName) + N''';';
+   PRINT N'PRINT N''Backing up the tail of the transaction log to '' + quotename(@backupFileName);';
    PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'--Make sure to read the comment in regards to changing the file name before doing so. (Search the file for ''IMPORTANT'')';
    PRINT N'';
-   PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = N''' + REPLACE(REPLACE(quotename(@backupFileName), N'[',N''), N']', N'')  + N'''';
-   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Transaction Log Tail Backup''' + N', ';
-   PRINT N'SKIP, NOREWIND, NOUNLOAD, STANDBY = N''' + REPLACE(REPLACE(quotename(@standbyFileName), N'[',N''), N']', N'') + N''', STATS = 10';
+   PRINT N'BACKUP LOG ' + quotename(@databasename) + N' TO DISK = @backupFileName';
+   PRINT N'WITH NO_TRUNCATE , NOFORMAT , NOINIT, NAME = N''' + quotename(@databasename) + N'-Transaction Log Tail Backup'',';
+   PRINT N'SKIP, NOREWIND, NOUNLOAD, STANDBY = @standbyFileName, STATS = 10';
    PRINT N'';
    PRINT N'PRINT N'''';';
    PRINT N'PRINT N''If the log backup was successful,  ' + quotename(@databasename) + N' is now in a Standby/Read-Only state.'';';
    PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'';
+   
   
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 end;

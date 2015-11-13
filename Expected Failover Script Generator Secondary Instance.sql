@@ -7,7 +7,7 @@ set nocount, arithabort, xact_abort on
 
 go
 
-use master;
+use master; 
 go
 
 declare @backupFilePath nvarchar(260)
@@ -61,8 +61,10 @@ where
 order by
    lssd.secondary_database;
 
-IF NOT EXISTS(SELECT * FROM @databases)
-   PRINT N'There are no selected databases configured for logshipping as a secondary database, online, and restored';
+IF NOT EXISTS(SELECT * FROM @databases)BEGIN
+   PRINT N'There are no selected databases configured for logshipping as a secondary database, online, and restored. Quitting execution...';
+   RETURN;
+END;
 
 select
    @databaseFilter as DatabaseFilter
@@ -175,7 +177,9 @@ PRINT N'--';
 
 set @databaseName = N'';
 
-WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
+raiserror('--',0,1) WITH NOWAIT; --flush print buffer
+
+WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName AND d.backup_job_id IS NOT NULL) BEGIN
 
    SELECT TOP 1
        @databaseName = d.database_name
@@ -290,6 +294,8 @@ PRINT N'PRINT N''Starting failover to secondary databases. Disabling secondary j
 PRINT N'PRINT N'''';';
 PRINT N''; 
 
+raiserror('',0,1) WITH NOWAIT; --flush print buffer
+
 --Iterate through the job ids and generate scripts to disable them
 
 DECLARE @jobName          nvarchar(128)
@@ -393,8 +399,9 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
-END;
 
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
+END;
 
 PRINT N'';
 PRINT N'PRINT N''Running databases'''' secondary jobs to ensure their respective transaction log tail backups are applied...'';';
@@ -430,8 +437,6 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'BEGIN TRY';
    PRINT N'';
    PRINT N'    DECLARE @retcode int';
-   PRINT N'           ,@lastCopiedFile     nvarchar(500)';
-   PRINT N'           ,@backupInfoCommand  nvarchar(1100)';
    PRINT N'';
    PRINT N'	EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @copyJobName + N'''';
    PRINT N'	    IF(@retcode <> 0) BEGIN';
@@ -440,8 +445,23 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	       ROLLBACK TRANSACTION;';
    PRINT N'	       RETURN;';
    PRINT N'	    END;';
+   PRINT N'        COMMIT TRANSACTION;';
+   PRINT N'';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N''Error running ' + quotename(@copyJobName) + N'. Rolling back...'';';
+   PRINT N'END CATCH;';
+   PRINT N'';
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'BEGIN TRANSACTION;';
+   PRINT N'BEGIN TRY';
    PRINT N'';
    PRINT N'	--Check to make sure the transaction log tail backup was copied';
+   PRINT N'';
+   PRINT N'    DECLARE @retcode int';
+   PRINT N'           ,@lastCopiedFile     nvarchar(500)';
+   PRINT N'           ,@backupInfoCommand  nvarchar(1100)';
    PRINT N'';
    PRINT N'	SELECT';
    PRINT N'	    @lastCopiedFile = lss.last_copied_file';
@@ -450,7 +470,6 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	WHERE';
    PRINT N'	    lss.secondary_id = ''' + @secondaryID + N''';';
    PRINT N'';
-   PRINT N'	--Check to make sure @backupInfoCommand is correct';
    PRINT N'	SET @backupInfoCommand = N''RESTORE HEADERONLY FROM DISK = N'''''' + @lastCopiedFile + N'''''''''; 
    PRINT N'';
    PRINT N'    DELETE FROM #backupInfo';
@@ -528,16 +547,18 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    --Check to make sure the transaction log tail backup was restored
 
+   PRINT N'         GO';
+   PRINT N'';
    PRINT N'	 	--Make sure the Transaction Log Tail Backup was restored'
    PRINT N'';
    PRINT N'	 	IF (EXISTS(';
    PRINT N'	 	    SELECT';
    PRINT N'	 	       *';
    PRINT N'	 	    FROM';
-   PRINT N'	 	      msdb.dbo.log_shipping_secondary_databases AS lssd';
+   PRINT N'	 	       log_shipping_secondary_databases AS lssd';
+   PRINT N'                INNER JOIN log_shipping_secondary as lss ON (lssd.last_restored_file = lss.last_copied_file)';
    PRINT N'	 	    WHERE';
    PRINT N'	 	       lssd.secondary_database = ''' + @databaseName + N''''; 
-   PRINT N'	 	       AND lssd.last_restored_file = @lastCopiedFile';
    PRINT N'	 	    ))';
    PRINT N'	 	BEGIN';
    PRINT N'	 	    COMMIT TRANSACTION;';
@@ -570,6 +591,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'END CATCH;';
    PRINT N'';
    
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
 
@@ -577,7 +599,7 @@ SET @databaseName = N'';
 
 PRINT N'--Now we restore the databases';
 PRINT N'';
-/*
+
 WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
 
    SELECT TOP 1 
@@ -596,7 +618,9 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'';
    PRINT N'    --Bring the database online. If the restore fails quit execution with error';
    PRINT N'';
+   /*
    PRINT N'    RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
+   */
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
@@ -605,7 +629,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'END CATCH;';
    PRINT N'';
 END;
-*/
+
 
 PRINT N'DROP TABLE #backupInfo, #jobInfo';
 PRINT N'PRINT N''*****Failover to ' + quotename(@@SERVERNAME) + N' complete. Begin failover logshipping if necessary*****'';';
