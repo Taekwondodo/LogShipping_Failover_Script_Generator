@@ -151,7 +151,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'BEGIN TRANSACTION';
    PRINT N'BEGIN TRY';
    PRINT N'';
-   PRINT N'    PRINT N''Inserting ' + quotename(@databaseName) + N'''s logshipping configuartion'';';
+   PRINT N'    PRINT N''Inserting ' + quotename(@databaseName) + N'''''s logshipping configuartion'';';
    PRINT N'    PRINT N'''';';
    PRINT N'';
    PRINT N'    EXEC msdb.dbo.sp_processlogshippingmonitorsecondary'; 
@@ -171,6 +171,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'        IF(@@ERROR <> 0)BEGIN';
    PRINT N'          PRINT N'''';';
    PRINT N'          PRINT N''There was an issue updating ' + quotename(@monitorServer) + N'. Rolling back and quitting batch execution...'';';
+   PRINT N'          PRINT N'''';';
    PRINT N'          ROLLBACK TRANSACTION;';
    PRINT N'          RETURN;';
    PRINT N'        END;';
@@ -182,12 +183,13 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
    PRINT N'    PRINT N''There was an issue updating the monitor server. Rolling back and quitting batch exeuciton...'';';
+   PRINT N'    PRINT N'''';';
    PRINT N'    ROLLBACK TRANSACTION';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
 END;
 
-PRINT N'PRINT N''' + quotename(@monitorServer) + N' successfully updated. Failover logshipping complete'';';
+PRINT N'PRINT N''*****' + quotename(@monitorServer) + N' successfully updated. Failover logshipping complete*****'';';
 
 

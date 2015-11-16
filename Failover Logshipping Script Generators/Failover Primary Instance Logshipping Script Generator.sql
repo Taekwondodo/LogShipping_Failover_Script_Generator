@@ -228,6 +228,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'';
    PRINT N'BEGIN TRY';
    PRINT N'';  
+   PRINT N'    PRINT N''=================================='';';
    PRINT N'    PRINT N''Beginning failover logshipping configuration on ' + quotename(@databaseName) + N''';';
    PRINT N'';
    PRINT N'    DECLARE @LS_BackupJobId           AS uniqueidentifier'; 
@@ -236,10 +237,8 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'           ,@currentDate           AS int --Needs to be YYYYMMHH format';
    PRINT N'           ,@LS_BackUpScheduleUID  AS uniqueidentifier';
    PRINT N'           ,@LS_BackUpScheduleID   AS int';
-   PRINT N'           ,@currentDatabase       AS nvarchar(129)';
    PRINT N'';
    PRINT N'    SET @currentDate = cast((convert(nvarchar(8), CURRENT_TIMESTAMP, 112)) as int); --YYYYMMHH';
-   PRINT N'    SET @currentDatabase = ''' + @databaseName + N'''';
    PRINT N'';
    PRINT N'    --Check to make sure the database isn''t already configured as a primary, is online, and has been restored';
    PRINT N'';
@@ -249,11 +248,11 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'        FROM'; 
    PRINT N'           master.sys.databases AS d LEFT JOIN log_shipping_primary_databases AS lspd ON (d.name = lspd.primary_database)';
    PRINT N'        WHERE';
-   PRINT N'           d.name = @currentDatabase';
-   PRINT N'           AND lspd.primary_database = NULL';
+   PRINT N'           d.name = N''' + @databaseName + N'''';
+   PRINT N'           AND lspd.primary_database IS NULL';
    PRINT N'           AND d.state_desc = ''ONLINE''';
    PRINT N'           AND d.is_in_standby = 0';
-   PRINT N'           AND d.is_read_ony = 0';
+   PRINT N'           AND d.is_read_only = 0';
    PRINT N'    ))BEGIN';
    PRINT N'';
    PRINT N'         EXEC @SP_Add_RetCode = master.dbo.sp_add_log_shipping_primary_database'; 
@@ -261,12 +260,12 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'           ,@backup_directory = N''' + @backupPath + N'''';
    PRINT N'           ,@backup_share = N''' + @backupPath + N''''; 
    PRINT N'           ,@backup_job_name = N''LSBackup_' + @databaseName + N''''; 
-   PRINT N'           ,@backup_retention_period = ' + CAST(@backupRetention AS varchar);
+   PRINT N'           ,@backup_retention_period = ' + @backupRetention ;
    PRINT N'           ,@monitor_server = N''' + @monitorServer + N'''';
    PRINT N'           ,@monitor_server_security_mode = 1';
-   PRINT N'           ,@backup_threshold = ' + CAST(@backupThreshold AS varchar);
-   PRINT N'           ,@threshold_alert_enabled = ' + CAST(@thresholdAlert AS nvarchar(1));
-   PRINT N'           ,@history_retention_period = ' + CAST(@historyRetention AS varchar);
+   PRINT N'           ,@backup_threshold = ' + @backupThreshold;
+   PRINT N'           ,@threshold_alert_enabled = ' + @thresholdAlert;
+   PRINT N'           ,@history_retention_period = ' + @historyRetention;
    PRINT N'           ,@backup_job_id = @LS_BackupJobId OUTPUT';
    PRINT N'           ,@primary_id = @LS_PrimaryId OUTPUT';
    PRINT N'           ,@overwrite = 1';
@@ -283,11 +282,11 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'             EXEC msdb.dbo.sp_add_schedule';
    PRINT N'                        @schedule_name =N''LSBackupSchedule_' + lower(@secondaryServer) + N'1' + N''''; --The 1 is kept from the original configuration
    PRINT N'                        ,@enabled = 1';
-   PRINT N'                        ,@freq_type = ' + CAST(@freqType AS varchar);
-   PRINT N'                        ,@freq_interval = ' + CAST(@freqInterval AS varchar);
-   PRINT N'                        ,@freq_subday_type = ' + CAST(@freqSubday AS varchar);
-   PRINT N'                        ,@freq_subday_interval = ' + CAST(@freqSubdayInterval AS varchar);
-   PRINT N'                        ,@freq_recurrence_factor = ' + CAST(@freqRecurrent AS varchar);
+   PRINT N'                        ,@freq_type = ' + @freqType;
+   PRINT N'                        ,@freq_interval = ' + @freqInterval;
+   PRINT N'                        ,@freq_subday_type = ' + @freqSubday;
+   PRINT N'                        ,@freq_subday_interval = ' + @freqSubdayInterval;
+   PRINT N'                        ,@freq_recurrence_factor = ' + @freqRecurrent;
    PRINT N'                        ,@active_start_date = @currentDate'; 
    PRINT N'                        ,@active_end_date = 99991231';
    PRINT N'                        ,@active_start_time = 0';
@@ -311,31 +310,37 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    PRINT N'         END;';
    PRINT N'';
    PRINT N'         EXEC master.dbo.sp_add_log_shipping_primary_secondary';
-   PRINT N'                    @primary_database = N''' + @databaseName + N'''';
+   PRINT N'                     @primary_database = N''' + @databaseName + N'''';
    PRINT N'                    ,@secondary_server = N''' + @@SERVERNAME + N''''; 
    PRINT N'                    ,@secondary_database = N''' + @originalPrimary + N'''';
    PRINT N'                    ,@overwrite = 1';
    PRINT N'';
    PRINT N' 	      PRINT N''Logshipping successfully configured'';';
+   PRINT N'          PRINT N'''';';
    PRINT N'';
    PRINT N'    END';
    PRINT N'    ELSE BEGIN';
    PRINT N'       PRINT N''' + quotename(@databaseName) + N' is either offline, not yet restored, or is already configured as a primary. Skipping...'';';
+   PRINT N'       PRINT N'''';';
    PRINT N'    END;';
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
-   PRINT N'    PRINT N''There was an issue configuring logshipping on ' + quotename(@databaseName) + N', quitting batch execution';
+   PRINT N'    PRINT N''There was an issue configuring logshipping on ' + quotename(@databaseName) + N'. Quitting batch execution and cleaning up artifacts'';';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    DELETE FROM log_shipping_primary_databases WHERE primary_database = N''' + @databaseName + N''';';
+   PRINT N'    DELETE FROM log_shipping_monitor_primary WHERE primary_database = N''' + @databaseName + N''';';
+   PRINT N'    DELETE FROM log_shipping_primary_secondaries WHERE secondary_database = N''' + @databaseName + N''';';
+   PRINT N'    EXEC sp_delete_job @job_id = @LS_BackupJobID';
    PRINT N'    RETURN;';
    PRINT N'END CATCH';
+
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
+PRINT N'PRINT N'''';';
 PRINT N'PRINT N''*****Failover primary logshipping complete. Continue to Failover Primary Monitor Logshipping script*****'';';
 
 --End of script, continue to Failover Primary Monitor Logshipping script
 
-
-
-
-;
 

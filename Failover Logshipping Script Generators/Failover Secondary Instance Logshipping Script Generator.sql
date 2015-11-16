@@ -279,7 +279,9 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'';
    PRINT N'GO';
    PRINT N'';
+   PRINT N'PRINT N''=================================='';';
    PRINT N'PRINT N''Starting Logshipping for ' + @databaseName + N''';';
+   PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'BEGIN TRY';
    PRINT N'';
@@ -305,8 +307,8 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'              master.sys.databases AS d LEFT JOIN log_shipping_secondary_databases AS lssd ON (d.name = lssd.secondary_database)';
    PRINT N'           WHERE';
    PRINT N'              d.name = ''' + @databaseName + N'''';
-   PRINT N'              AND lssd.secondary_database = NULL';
-   PRINT N'              AND d.status = ''ONLINE''';
+   PRINT N'              AND lssd.secondary_database IS NULL';
+   PRINT N'              AND d.state_desc = ''ONLINE''';
    PRINT N'              AND d.is_read_only = 1';
    PRINT N'              AND d.is_in_standby = 1';
    PRINT N'    ))BEGIN';       
@@ -368,7 +370,7 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
 
    PRINT N'';
    PRINT N'               EXEC msdb.dbo.sp_add_schedule'; 
-   PRINT N'                     @schedule_name =N''DefaultRestoreJobSchedule'; 
+   PRINT N'                     @schedule_name =N''DefaultRestoreJobSchedule'''; 
    PRINT N'                     ,@enabled = 1 ';
    PRINT N'                     ,@freq_type = ' + @freqType; 
    PRINT N'                     ,@freq_interval = ' + @freqInterval; 
@@ -388,6 +390,7 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'          END';
    PRINT N'          ELSE BEGIN';
    PRINT N'	            PRINT N''An error was encountered while executing master.dbo.sp_add_log_shipping_secondary_primary. Quitting batch execution...'';';
+   PRINT N'                PRINT N'''';';
    PRINT N'                RETURN;';
    PRINT N'	      END;'; 
    PRINT N'';
@@ -411,6 +414,7 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'	      END'; 
    PRINT N'	      ELSE BEGIN';
    PRINT N'                PRINT N''There was an issue adding the job schedule. Quitting batch execution...'';';
+   PRINT N'                PRINT N'''';';
    PRINT N'	            RETURN;';
    PRINT N'	      END;';
    PRINT N'';
@@ -427,13 +431,12 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'		 	     ,@enabled = 1';
    PRINT N'          END';
    PRINT N'	      ELSE BEGIN';
-   PRINT N'	            RINT N''An error was encountered while executing sp_add_log_shipping_secondary_database. Quitting batch execution...''';
+   PRINT N'	            PRINT N''An error was encountered while executing sp_add_log_shipping_secondary_database. Quitting batch execution...''';
+   PRINT N'                PRINT N'''';';
    PRINT N'                RETURN;';
    PRINT N'	      END;';
    PRINT N'';
    PRINT N'          PRINT N''' + quotename(@databaseName) + N' has successfully been configured as a failover secondary.'';';
-   PRINT N'          PRINT N'''';';
-   PRINT N'          PRINT N''========================================'';';
    PRINT N'          PRINT N'''';';
    PRINT N'    END';
    PRINT N'    ELSE BEGIN';
@@ -444,12 +447,16 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
-   PRINT N'    PRINT N''An issue was encountered while configuring ' + quotename(@databaseName) + N' for logshipping. Quitting batch execution...'';';
+   PRINT N'    PRINT N''There was an issue configuring logshipping on ' + quotename(@databaseName) + N'. Quitting batch execution and cleaning up artifacts'';';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    DELETE FROM log_shipping_secondary_databases WHERE secondary_database = N''' + @databaseName + N''';';
+   PRINT N'    DELETE FROM log_shipping_monitor_secondary WHERE secondary_database = N''' + @databaseName + N''';';
+   PRINT N'    DELETE FROM log_shipping_secondary WHERE primary_database = N''' + @databaseName + N''';';
+   PRINT N'    EXEC sp_delete_job @job_id = @LS_Secondary__CopyJobId	';
+   PRINT N'    EXEC sp_delete_job @job_id = @LS_Secondary__RestoreJobId'
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
 END; 
 
-PRINT N'PRINT N''Failover secondary logshipping complete. Continue to Failover Secondary Monitor Script'';';
-
-
+PRINT N'PRINT N''*****Failover secondary logshipping complete. Continue to Failover Secondary Monitor Script*****'';';

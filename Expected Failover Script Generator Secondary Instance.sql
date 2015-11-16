@@ -177,7 +177,7 @@ PRINT N'--';
 
 set @databaseName = N'';
 
-raiserror('--',0,1) WITH NOWAIT; --flush print buffer
+raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName AND d.backup_job_id IS NOT NULL) BEGIN
 
@@ -405,6 +405,7 @@ END;
 
 PRINT N'';
 PRINT N'PRINT N''Running databases'''' secondary jobs to ensure their respective transaction log tail backups are applied...'';';
+PRINT N'PRINT N'''';';
 PRINT N'';
 
 set @databaseName = N'';
@@ -442,6 +443,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	    IF(@retcode <> 0) BEGIN';
    PRINT N'	       PRINT N'''';';
    PRINT N'	       PRINT N''Error running ' + quotename(@copyJobName) + N'. Rolling back...'';';
+   PRINT N'           PRINT N'''';';
    PRINT N'	       ROLLBACK TRANSACTION;';
    PRINT N'	       RETURN;';
    PRINT N'	    END;';
@@ -449,10 +451,14 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
    PRINT N'    PRINT N''Error running ' + quotename(@copyJobName) + N'. Rolling back...'';';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    RETURN';
    PRINT N'END CATCH;';
    PRINT N'';
-   PRINT N'GO';
+   PRINT N'GO --We have to use separate batches in order to let the logshipping tables update';
    PRINT N'';
    PRINT N'BEGIN TRANSACTION;';
    PRINT N'BEGIN TRY';
@@ -528,49 +534,12 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	)'
    PRINT N'	EXEC sp_executesql @backupInfoCommand';
    PRINT N'';
-   PRINT N'    --If the log was copied over run the restore job';
    PRINT N'';
    PRINT N'	IF(EXISTS(SELECT * FROM #backupInfo AS bi WHERE bi.backupName LIKE ''' + @tailBackupName + N'''))BEGIN';
+   PRINT N'        PRINT N'''';';
    PRINT N'	    PRINT N''Copy job successfully copied the Transaction Log Tail Backup. Starting restore job...'';';
+   PRINT N'        PRINT N'''';';
    PRINT N'	    DELETE FROM #backupInfo;';
-   PRINT N'';
-   PRINT N'        --Run restore job';
-   PRINT N'';
-   PRINT N'	    EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @restoreJobName + N'''';
-   PRINT N'	 	    IF (@retcode <> 0) BEGIN';
-   PRINT N'	 	       PRINT N'''';';
-   PRINT N'	 	       PRINT N''Error running ' + quotename(@restoreJobName) + N'. Rolling back...'';';
-   PRINT N'	 	       ROLLBACK TRANSACTION;';
-   PRINT N'	 	       RETURN;';
-   PRINT N'	 	    END;';
-   PRINT N'';
-
-   --Check to make sure the transaction log tail backup was restored
-
-   PRINT N'         GO';
-   PRINT N'';
-   PRINT N'	 	--Make sure the Transaction Log Tail Backup was restored'
-   PRINT N'';
-   PRINT N'	 	IF (EXISTS(';
-   PRINT N'	 	    SELECT';
-   PRINT N'	 	       *';
-   PRINT N'	 	    FROM';
-   PRINT N'	 	       log_shipping_secondary_databases AS lssd';
-   PRINT N'                INNER JOIN log_shipping_secondary as lss ON (lssd.last_restored_file = lss.last_copied_file)';
-   PRINT N'	 	    WHERE';
-   PRINT N'	 	       lssd.secondary_database = ''' + @databaseName + N''''; 
-   PRINT N'	 	    ))';
-   PRINT N'	 	BEGIN';
-   PRINT N'	 	    COMMIT TRANSACTION;';
-   PRINT N'	 	    PRINT N''Transaction Log Tail Backup successfully restored.'';';
-   PRINT N'	 	END';
-   PRINT N'	 	ELSE BEGIN';
-   PRINT N'	 	    PRINT N'''';';
-   PRINT N'	 	    PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...'';';
-   PRINT N'	 	    ROLLBACK TRANSACTION;';
-   PRINT N'	 	    RETURN;';
-   PRINT N'	 	END;';   
-   PRINT N'';
    PRINT N'	END';
    PRINT N'	ELSE BEGIN';
    PRINT N'	    PRINT N'''';';
@@ -582,10 +551,65 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	    RETURN;';
    PRINT N'	END;';
    PRINT N'';
+   PRINT N'    --Run restore job';
+   PRINT N'';
+   PRINT N'	EXEC @retcode = msdb.dbo.sp_start_job @job_name = ''' + @restoreJobName + N'''';
+   PRINT N'	    IF (@retcode <> 0) BEGIN';
+   PRINT N'	 	    PRINT N'''';';
+   PRINT N'	 	    PRINT N''Error running ' + quotename(@restoreJobName) + N'. Rolling back...'';';
+   PRINT N'             PRINT N'''';';
+   PRINT N'	 	    ROLLBACK TRANSACTION;';
+   PRINT N'	 	    RETURN;';
+   PRINT N'        END;'
+   PRINT N'';
+   PRINT N'    COMMIT TRANSACTION;';
+   PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''And error was encountered while running/checking job ' + quotename(@copyJobName) + N'. Rolling Back and quitting batch execution...'';';
+   PRINT N'    PRINT N''There was an issue while checking to make sure the transaction log was copied over/starting ' + quotename(@restoreJobName) + N'. Rolling back and quitting batch execution.'';';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    ROLLBACK TRANSACTION;';
+   PRINT N'    RETURN;';
+   PRINT N'END CATCH;';
+   PRINT N'';
+
+   --Check to make sure the transaction log tail backup was restored
+
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'BEGIN TRANSACTION;';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
+   PRINT N'    --Make sure the Transaction Log Tail Backup was restored'
+   PRINT N'';
+   PRINT N'	IF (EXISTS(';
+   PRINT N'	   SELECT';
+   PRINT N'	 	 *';
+   PRINT N'	   FROM';
+   PRINT N'	 	 log_shipping_secondary_databases AS lssd';
+   PRINT N'          INNER JOIN log_shipping_secondary as lss ON (lssd.last_restored_file = lss.last_copied_file)';
+   PRINT N'	   WHERE';
+   PRINT N'	 	 lssd.secondary_database = ''' + @databaseName + N''''; 
+   PRINT N'	   ))';
+   PRINT N'	BEGIN';
+   PRINT N'	   PRINT N''Transaction Log Tail Backup successfully restored.'';';
+   PRINT N'	   COMMIT TRANSACTION;';
+   PRINT N'	END';
+   PRINT N'	ELSE BEGIN';
+   PRINT N'	   PRINT N'''';';
+   PRINT N'	   PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...'';';
+   PRINT N'	   PRINT N'''';';
+   PRINT N'	   ROLLBACK TRANSACTION;';
+   PRINT N'	   RETURN;';
+   PRINT N'	END;';   
+   PRINT N'';
+   PRINT N'';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''And error was encountered while checking if ' + quotename(@restoreJobName) + N' restored the Transaction Tail Log Backup. Rolling Back and quitting batch execution...'';';
+   PRINT N'	PRINT N'''';';
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
@@ -614,17 +638,17 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'GO';
    PRINT N'';
    PRINT N'BEGIN TRY';
+   PRINT N'    PRINT N''=================================='';';
    PRINT N'    PRINT N''Bringing ' + quotename(@databaseName) + N' online'';';
    PRINT N'';
    PRINT N'    --Bring the database online. If the restore fails quit execution with error';
    PRINT N'';
-   /*
    PRINT N'    RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
-   */
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N''Error encountered while restoring ' + quotename(@databaseName) + N'. Quitting execution...'';';
+   PRINT N'    PRINT N'''';';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
