@@ -188,6 +188,8 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
+
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
 PRINT N'PRINT N''*****' + quotename(@monitorServer) + N' successfully updated. Failover logshipping complete*****'';';

@@ -594,6 +594,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	   ))';
    PRINT N'	BEGIN';
    PRINT N'	   PRINT N''Transaction Log Tail Backup successfully restored.'';';
+   PRINT N'       PRINT N'''';';
    PRINT N'	   COMMIT TRANSACTION;';
    PRINT N'	END';
    PRINT N'	ELSE BEGIN';
@@ -638,6 +639,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'GO';
    PRINT N'';
    PRINT N'BEGIN TRY';
+   PRINT N'    PRINT N'''';';
    PRINT N'    PRINT N''=================================='';';
    PRINT N'    PRINT N''Bringing ' + quotename(@databaseName) + N' online'';';
    PRINT N'';
@@ -652,6 +654,8 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
+
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
 
@@ -659,5 +663,4 @@ PRINT N'DROP TABLE #backupInfo, #jobInfo';
 PRINT N'PRINT N''*****Failover to ' + quotename(@@SERVERNAME) + N' complete. Begin failover logshipping if necessary*****'';';
 
 --End of script, begin failover logshipping if necessary
-
 

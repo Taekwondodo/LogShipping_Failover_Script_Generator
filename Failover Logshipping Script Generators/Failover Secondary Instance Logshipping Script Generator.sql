@@ -457,6 +457,8 @@ WHILE(EXISTS(SELECT * FROM @databases as d WHERE @databaseName < d.database_name
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
+
+   raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END; 
 
 PRINT N'PRINT N''*****Failover secondary logshipping complete. Continue to Failover Secondary Monitor Script*****'';';
