@@ -19,6 +19,22 @@ We're then going to search through those messages for LIKE N'%Number of files co
 from them. At that point if the number is > 0 THEN we're going to check LS.secondary for the last copied file and proceed with our normal checking of the file.
 */
 
+:connect sql-logship-p
+go
+
+use msdb
+
+exec sp_start_job @job_name = 'LSBackup_LogshipTest_1'
+exec sp_start_job @job_name = 'LSBackup_LogshipTest_2'
+exec sp_start_job @job_name = 'LSBackup_PerformanceTest'
+exec sp_start_job @job_name = 'LSBackup_Test'
+
+go
+
+:connect sql-logship-s
+
+go
+
 use msdb
 
 exec sp_start_job @job_name = 'LSBackup_LogshipTest_1'
