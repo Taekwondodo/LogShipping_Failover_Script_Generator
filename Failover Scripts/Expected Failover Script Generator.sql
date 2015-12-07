@@ -223,6 +223,14 @@ print N'set nocount, arithabort, xact_abort on';
 print N'';
 print N'GO';
 PRINT N'';
+PRINT N'-- #elapsedTime is used to keep track of the total execution time of the script';
+PRINT N'';
+PRINT N'IF OBJECT_ID(''tempdb.dbo.#elapsedTime'', ''U'') IS NOT NULL';
+PRINT N'    DROP TABLE #elapsedTime';
+PRINT N'';
+PRINT N'CREATE TABLE #elapsedTime (timestamps datetime);';
+PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
+PRINT N'';
 PRINT N'--#jobInfo takes the result of the sp xp_slqagent_enum_jobs';
 PRINT N'--xp_slqagent_enum_jobs is useful as it returns the ''running'' column which is how we''ll determine if a job is running';
 PRINT N'';
@@ -351,7 +359,7 @@ PRINT N'/*';
 PRINT N'IMPORTANT: The name given to the Transaction Tail Log Backup file is used during the secondary instance script to identify it.'
 PRINT N'If you change the name here, you''d have to it change within ''Expected Failover Script Generator Secondary Instance'' to reflect that'
 PRINT N'If you do wish to change the name, I''d recommend keeping the name so that it can be identified by ''%Trasaction Log Tail Backup'' so that you don''t have to update the secondary script';
-PRINT N'If doing so is absolutely necessary, the variable you need to update is @tailBackupName';
+PRINT N'If doing so is absolutely necessary, the variable you need to update within Expected Failover Script Generator Secondary Instance is @tailBackupName';
 PRINT N'*/';
 
 
@@ -402,11 +410,22 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    PRINT N'';
    PRINT N'';
    
-  
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 end;
 
-PRINT N'DROP TABLE #jobInfo';
+PRINT N' --Print the elapsed time';
+PRINT N'';
+PRINT N'DECLARE @startTime DATETIME';
+PRINT N'       ,@endTime   DATETIME';
+PRINT N'';
+PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
+PRINT N'SELECT @startTime = MIN(timestamps), @endTime = MAX(timestamps) FROM #elapsedTime';
+PRINT N'';
+PRINT N'PRINT N'''';';
+PRINT N'PRINT N''Total Elapsed Time: '' +  STUFF(CONVERT(NVARCHAR(12), @endTime - @startTime, 14), 9, 1, ''.''); --hh:mi:ss.mmm';
+PRINT N'PRINT N'''';';
 PRINT N'PRINT N''*****Failover completed, continue to Expected Failover Script Generator Secondary Instance*****'';';
+PRINT N'';
+PRINT N'DROP TABLE #jobInfo, #elapsedTime';
 
 --End of script, continue to secondary instance script

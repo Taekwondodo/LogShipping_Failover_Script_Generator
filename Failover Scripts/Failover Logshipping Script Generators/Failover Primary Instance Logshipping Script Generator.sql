@@ -177,6 +177,14 @@ PRINT N'';
 PRINT N'PRINT N''Beginning Logshipping Configurations...'';';
 PRINT N'PRINT N'''';';
 PRINT N'';
+PRINT N'-- #elapsedTime is used to keep track of the total execution time of the script';
+PRINT N'';
+PRINT N'IF OBJECT_ID(''tempdb.dbo.#elapsedTime'', ''U'') IS NOT NULL';
+PRINT N'    DROP TABLE #elapsedTime';
+PRINT N'';
+PRINT N'CREATE TABLE #elapsedTime (timestamps datetime);';
+PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
+PRINT N'';
 
 --
 --End of setup, start logshipping 
@@ -338,8 +346,20 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.secondary_dat
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
+PRINT N' --Print the elapsed time';
+PRINT N'';
+PRINT N'DECLARE @startTime DATETIME';
+PRINT N'       ,@endTime   DATETIME';
+PRINT N'';
+PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
+PRINT N'SELECT @startTime = MIN(timestamps), @endTime = MAX(timestamps) FROM #elapsedTime';
+PRINT N'';
+PRINT N'PRINT N'''';';
+PRINT N'PRINT N''Total Elapsed Time: '' +  STUFF(CONVERT(NVARCHAR(12), @endTime - @startTime, 14), 9, 1, ''.''); --hh:mi:ss.mmm';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N''*****Failover primary logshipping complete. Continue to Failover Primary Monitor Logshipping script*****'';';
+PRINT N'';
+PRINT N'DROP TABLE #elapsedTime';
 
 --End of script, continue to Failover Primary Monitor Logshipping script
 

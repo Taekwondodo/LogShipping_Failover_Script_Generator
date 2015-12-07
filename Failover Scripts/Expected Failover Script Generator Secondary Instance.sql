@@ -207,10 +207,13 @@ PRINT N'SET nocount, arithabort, xact_abort on';
 PRINT N'';
 PRINT N'GO';
 PRINT N'';
+PRINT N'-- #elapsedTime is used to keep track of the total execution time of the script';
+PRINT N'';
 PRINT N'IF OBJECT_ID(''tempdb.dbo.#elapsedTime'', ''U'') IS NOT NULL';
 PRINT N'    DROP TABLE #elapsedTime';
 PRINT N'';
-PRINT N'CREATE TABLE #elapsedTime (start datetime);';
+PRINT N'CREATE TABLE #elapsedTime (timestamps datetime);';
+PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
 PRINT N'';
 PRINT N'--#backupInfo takes result of RESTORE HEADERONLY to ensure Transaction Log Tail Backup is copied over';
 PRINT N'';
@@ -527,7 +530,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	END;';
    PRINT N'';
    PRINT N'	DECLARE @session varchar';
-   PRINT N'	       ,@numCopied nvarchar(128)';
+   PRINT N'	       ,@numCopied nvarchar(10)';
    PRINT N'	       ,@message nvarchar(4000)';
    PRINT N'';
    PRINT N'	-- Wait for all of the rows to be inserted into MHD from the copy job''s run';
@@ -577,27 +580,15 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	IF(@session = 2)BEGIN --If not 2, then the job did not run successfully';
    PRINT N'';
    PRINT N'	   SELECT TOP 1 ';
-   PRINT N'	      @message = RTRIM(l.message)';
+   PRINT N'	      @message = LTRIM(REVERSE(l.message))';
    PRINT N'	   FROM ';
    PRINT N'	      log_shipping_monitor_history_detail as l';
    PRINT N'	   ORDER BY log_time desc';
    PRINT N'';
    PRINT N'	   -- We''re starting at the right side of the message taking one char at a time and checking the ascii value until we don''t get a number in order to get the entire number';
    PRINT N'';
-   PRINT N'	   DECLARE @index int';
-   PRINT N'	          ,@temp char;';
+   PRINT N'	   SET @numCopied = REVERSE(LEFT(@numCopied, CHARINDEX('':'', @numCopied) - 2));';
    PRINT N'';
-   PRINT N'	   SET @index = datalength(@message) / 2;';
-   PRINT N'	   SET @temp = substring(@message, @index, 1)';
-   PRINT N'	   SET @numCopied = '''';';
-   PRINT N'';
-   PRINT N'	   WHILE(ASCII(@temp) > 47 and ASCII(@temp) < 58)BEGIN';
-   PRINT N'';
-   PRINT N'	      SET @numCopied = @temp + @numCopied --append the new number to @numCopied';
-   PRINT N'	      SET @index = @index - 1;';
-   PRINT N'	      SET @temp = SUBSTRING(@message, @index, 1)';
-   PRINT N'';
-   PRINT N'	   END;';
    PRINT N'';
    PRINT N'	   PRINT N''Number of files copied: '' + @numCopied;'; -- testing
    PRINT N'';
@@ -839,26 +830,14 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	   -- So we''re grabbing all of the rows inserted after our timestamp (which will only be rows for the restore job we ran) and finding the one that has our information';
    PRINT N'';
    PRINT N'	   SELECT';
-   PRINT N'	      @message = RTRIM(l.message)';
+   PRINT N'	      @message = LTRIM(REVERSE(l.message))';
    PRINT N'	   FROM ';
    PRINT N'	      log_shipping_monitor_history_detail AS l';
    PRINT N'	   WHERE';
    PRINT N'	      log_time > @start';
    PRINT N'	      AND l.message LIKE ''%Number of log backup files restored:%'';';
    PRINT N'';
-   PRINT N'	   -- We''re starting at the right side of the message taking one char at a time (incase the # of files copied is greater than 1 digit) and checking the ascii value until we don''t get a number';
-   PRINT N'';
-   PRINT N'	   SET @index = datalength(@message) / 2;';
-   PRINT N'	   SET @temp = substring(@message, @index, 1)';
-   PRINT N'	   SET @numRestored = '''';';
-   PRINT N'';
-   PRINT N'	   WHILE(ASCII(@temp) > 47 AND ASCII(@temp) < 58)BEGIN';
-   PRINT N'	      ';
-   PRINT N'	      SET @numRestored = @temp + @numRestored --append the new number to @numCopied';
-   PRINT N'	      SET @index = @index - 1;';
-   PRINT N'	      SET @temp = substring(@message, @index, 1)';
-   PRINT N'';
-   PRINT N'	   END;';
+   PRINT N'	   SET @numRestored = REVERSE(LEFT(@num, CHARINDEX('':'', @num) - 2));';
    PRINT N'';
    PRINT N'	   PRINT N''Number of files restored: '' + @numRestored;';
    PRINT N'	END';
@@ -945,7 +924,7 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    PRINT N'';
    PRINT N'    --Bring the database online. If the restore fails quit execution with error';
    PRINT N'';
-   PRINT N'    RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
+  -- PRINT N'    RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
@@ -958,10 +937,22 @@ WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 
+PRINT N'PRINT N'''';';
 PRINT N'';
-PRINT N'DROP TABLE #backupInfo, #jobInfo';
+PRINT N' --Print the elapsed time';
+PRINT N'';
+PRINT N'DECLARE @startTime DATETIME';
+PRINT N'       ,@endTime   DATETIME';
+PRINT N'';
+PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
+PRINT N'SELECT @startTime = MIN(timestamps), @endTime = MAX(timestamps) FROM #elapsedTime';
+PRINT N'';
+PRINT N'PRINT N''Total Elapsed Time: '' +  STUFF(CONVERT(NVARCHAR(12), @endTime - @startTime, 14), 9, 1, ''.''); --hh:mi:ss.mmm';
+PRINT N'';
 PRINT N'PRINT N'''';';
 PRINT N'PRINT N''*****Failover to ' + quotename(@@SERVERNAME) + N' complete. Begin failover logshipping if necessary*****'';';
+PRINT N'';
+PRINT N'DROP TABLE #backupInfo, #jobInfo, #elapsedTime';
 
 --End of script, begin failover logshipping if necessary
 
