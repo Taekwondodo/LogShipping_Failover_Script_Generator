@@ -1,6 +1,6 @@
 /*
 
-This script is ran on the server you want to setup as a primary ofr logshipping
+This script is ran on the server you want to setup as a primary for logshipping
 
 Use this script to produce a T-SQL script to setup the server it is run on as a logshipping primary instance
 
@@ -9,7 +9,7 @@ Use this script to produce a T-SQL script to setup the server it is run on as a 
 set nocount on;
 go
 
-use master;
+use msdb;
 go
 
 declare @backupFilePath nvarchar(260)
@@ -32,8 +32,37 @@ exec xp_instance_regread
 
 if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\';
 
-declare @backup_files table (
+declare @databases table (
    database_name    nvarchar(128) not null primary key clustered
- , backup_file_name nvarchar(260)
 );
+
+insert into @databases (
+   database_name
+  )
+
+select 
+   d.name as database_name
+from 
+   master.sys.databases as d
+where
+   (d.state_desc = N'ONLINE')
+   and ((@databaseFilter is null) 
+      or (d.name like N'%' + @databaseFilter + N'%'))
+order by
+   d.name asc;
+
+if not exists(select * from @databases)
+   raiserror('There are no databases eligible to be configured for logshipping', 17, -1);
+
+if (@debug = 1) begin
+
+   select
+      *
+   from
+      @databases AS d
+   order by
+      d.database_name;
+
+end;
+
 
