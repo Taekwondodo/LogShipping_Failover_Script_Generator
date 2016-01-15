@@ -148,8 +148,8 @@ SET @maxlenJob = (select max(datalength(j.job_name)) from @jobs as j);
 
 PRINT N'--================================';
 PRINT N'--';
-PRINT N'-- Use the following script to failover to the following databases on ' + quotename(@@servername) + N', disabling their secondary instance jobs' + ':';
 PRINT N'-- Run on the original secondary';
+PRINT N'-- Use the following script to failover to the following databases on ' + quotename(@@servername) + N', disabling their secondary instance jobs' + ':';
 PRINT N'--';
 
 WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
@@ -404,6 +404,7 @@ WHILE EXISTS (SELECT * FROM @jobs AS j WHERE @jobName < j.job_name) BEGIN
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
    PRINT N'    PRINT N''There was an error while working on ' + quotename(@jobName) + N'. Rolling back and quitting batch execution...'';';
+   PRINT N'    PRINT N'''';';
    PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
@@ -575,6 +576,10 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	SET @stop = current_timestamp';
    PRINT N'	PRINT N''Elapsed Time: '' + CAST(DATEDIFF(s, @start, @stop) AS VARCHAR);';
    PRINT N'';
+
+               --We determine if the tail backups were copied over by checking the log message. Specifically the substring "Number of files copied: #" at the end of the message. 
+               --All we're doing here is extracting the number, using the colon as a point of reference to do so.
+
    PRINT N'	--Determine if the copy job copied over anything';
    PRINT N'';
    PRINT N'	IF(@session = 2)BEGIN --If not 2, then the job did not run successfully';
@@ -585,9 +590,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	      log_shipping_monitor_history_detail as l';
    PRINT N'	   ORDER BY log_time desc';
    PRINT N'';
-   PRINT N'	   -- We''re starting at the right side of the message taking one char at a time and checking the ascii value until we don''t get a number in order to get the entire number';
-   PRINT N'';
-   PRINT N'	   SET @numCopied = REVERSE(LEFT(@numCopied, CHARINDEX('':'', @numCopied) - 2));';
+   PRINT N'	   SET @numCopied = REVERSE(LEFT(@message, CHARINDEX('':'', @message) - 2));';
    PRINT N'';
    PRINT N'';
    PRINT N'	   PRINT N''Number of files copied: '' + @numCopied;'; -- testing
@@ -625,90 +628,94 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'		      lss.secondary_id = ''' + @secondaryID + N''';';
    PRINT N'            raiserror(''Waiting for log_shipping_secondary to update last_copied_file...'',0,1) WITH NOWAIT; --flush print buffer';
    PRINT N'	    END';
-   PRINT N'';
-   PRINT N'	    --Now we make sure the file is the the log tail backup';
-   PRINT N'';
-   PRINT N'	    SET @backupInfoCommand = N''RESTORE HEADERONLY FROM DISK = N'''''' + @currentCopiedFile + N'''''''''; 
-   PRINT N'';
-   PRINT N'	    DELETE FROM #backupInfo';
-   PRINT N'	    INSERT INTO #backupInfo('
-   PRINT N'			 BackupName,';
-   PRINT N'			 BackupDescription,';
-   PRINT N'			 BackupType,';
-   PRINT N'			 ExpirationDate,';
-   PRINT N'			 Compressed,';
-   PRINT N'			 Position,';
-   PRINT N'			 DeviceType,';
-   PRINT N'			 UserName,';
-   PRINT N'			 ServerName,';
-   PRINT N'			 DatabaseName,';
-   PRINT N'			 DatabaseVersion,';
-   PRINT N'			 DatabaseCreationDate,';
-   PRINT N'			 BackupSize,';
-   PRINT N'			 FirstLSN,';
-   PRINT N'			 LastLSN,';
-   PRINT N'			 CheckpointLSN,';
-   PRINT N'			 DatabaseBackupLSN,';
-   PRINT N'			 BackupStartDate,';
-   PRINT N'			 BackupFinishDate,';
-   PRINT N'			 SortOrder,';
-   PRINT N'			 [CodePage],';
-   PRINT N'			 UnicodeLocaleId,';
-   PRINT N'			 UnicodeComparisonStyle,';
-   PRINT N'			 CompatibilityLevel,';
-   PRINT N'			 SoftwareVendorId,';
-   PRINT N'			 SoftwareVersionMajor,';
-   PRINT N'			 SoftwareVersionMinor,';
-   PRINT N'			 SoftwareVersionBuild,';
-   PRINT N'			 MachineName,';
-   PRINT N'			 Flags,';
-   PRINT N'			 BindingId,';
-   PRINT N'			 RecoveryForkId,';
-   PRINT N'			 Collation,';
-   PRINT N'			 FamilyGUID,';
-   PRINT N'			 HasBulkLoggedData,';
-   PRINT N'			 IsSnapshot,';
-   PRINT N'			 IsReadOnly,';
-   PRINT N'			 IsSingleUser,';
-   PRINT N'			 HasBackupChecksums,';
-   PRINT N'			 IsDamaged,';
-   PRINT N'			 BeginsLogChain,';
-   PRINT N'			 HasIncompleteMetaData,';
-   PRINT N'			 IsForceOffline,';
-   PRINT N'			 IsCopyOnly,';
-   PRINT N'			 FirstRecoveryForkID,';
-   PRINT N'			 ForkPointLSN,';
-   PRINT N'			 RecoveryModel,';
-   PRINT N'			 DifferentialBaseLSN,';
-   PRINT N'			 DifferentialBaseGUID,';
-   PRINT N'			 BackupTypeDescription,';
-   PRINT N'			 BackupSetGUID ';
-   PRINT N'		)'
-   PRINT N'		EXEC sp_executesql @backupInfoCommand';
-   PRINT N'';
-   PRINT N'		IF(EXISTS(SELECT * FROM #backupInfo AS bi WHERE bi.backupName LIKE ''' + @tailBackupName + N'''))BEGIN';
-   PRINT N'	         PRINT N'''';';
-   PRINT N'		    PRINT N''Copy job successfully copied the Transaction Log Tail Backup. Starting restore job...'';';
-   PRINT N'	         PRINT N'''';';
-   PRINT N'		    DELETE FROM #backupInfo;';
-   PRINT N'		END';
-   PRINT N'		ELSE BEGIN';
-   PRINT N'		    PRINT N'''';';
-   PRINT N'	         PRINT N'''';';
-   PRINT N'		    PRINT N''' + quotename(@copyJobName) + N' did not copy over the Transaction Log Tail Backup. Check to make sure the file name follows the same format'';';
-   PRINT N'		    PRINT N'' as the backups output by the jobs themselves. This includes being in UTC. Rolling Back and quitting batch execution...'';';
-   PRINT N'	         PRINT N'''';';
-   PRINT N'		    ROLLBACK TRANSACTION;';
-   PRINT N'		    RETURN;';
-   PRINT N'		END;';
    PRINT N'    END';
+   PRINT N'    ELSE BEGIN';
+   PRINT N'       PRINT N'''';';
+   PRINT N'       PRINT N'''';';
+   PRINT N'       PRINT N''' + quotename(@copyJobName) + N' did not copy over any log backups. Checking to see if the Transaction Log Tail Backup was copied previously...'';';
+   PRINT N'       PRINT N'''';';
+   PRINT N'    END;';
+   PRINT N'';
+   PRINT N'   --Now we check to see if the log tail backup has been copied over';
+   PRINT N'';
+   PRINT N'   SET @backupInfoCommand = N''RESTORE HEADERONLY FROM DISK = N'''''' + @currentCopiedFile + N'''''''''; 
+   PRINT N'';
+   PRINT N'   DELETE FROM #backupInfo';
+   PRINT N'   INSERT INTO #backupInfo('
+   PRINT N'	      BackupName,';
+   PRINT N'		 BackupDescription,';
+   PRINT N'		 BackupType,';
+   PRINT N'		 ExpirationDate,';
+   PRINT N'		 Compressed,';
+   PRINT N'		 Position,';
+   PRINT N'		 DeviceType,';
+   PRINT N'		 UserName,';
+   PRINT N'		 ServerName,';
+   PRINT N'		 DatabaseName,';
+   PRINT N'		 DatabaseVersion,';
+   PRINT N'		 DatabaseCreationDate,';
+   PRINT N'		 BackupSize,';
+   PRINT N'		 FirstLSN,';
+   PRINT N'		 LastLSN,';
+   PRINT N'		 CheckpointLSN,';
+   PRINT N'		 DatabaseBackupLSN,';
+   PRINT N'		 BackupStartDate,';
+   PRINT N'		 BackupFinishDate,';
+   PRINT N'		 SortOrder,';
+   PRINT N'		 [CodePage],';
+   PRINT N'		 UnicodeLocaleId,';
+   PRINT N'		 UnicodeComparisonStyle,';
+   PRINT N'		 CompatibilityLevel,';
+   PRINT N'		 SoftwareVendorId,';
+   PRINT N'		 SoftwareVersionMajor,';
+   PRINT N'		 SoftwareVersionMinor,';
+   PRINT N'		 SoftwareVersionBuild,';
+   PRINT N'		 MachineName,';
+   PRINT N'		 Flags,';
+   PRINT N'		 BindingId,';
+   PRINT N'		 RecoveryForkId,';
+   PRINT N'		 Collation,';
+   PRINT N'		 FamilyGUID,';
+   PRINT N'		 HasBulkLoggedData,';
+   PRINT N'		 IsSnapshot,';
+   PRINT N'		 IsReadOnly,';
+   PRINT N'		 IsSingleUser,';
+   PRINT N'		 HasBackupChecksums,';
+   PRINT N'		 IsDamaged,';
+   PRINT N'		 BeginsLogChain,';
+   PRINT N'		 HasIncompleteMetaData,';
+   PRINT N'		 IsForceOffline,';
+   PRINT N'		 IsCopyOnly,';
+   PRINT N'		 FirstRecoveryForkID,';
+   PRINT N'		 ForkPointLSN,';
+   PRINT N'		 RecoveryModel,';
+   PRINT N'		 DifferentialBaseLSN,';
+   PRINT N'		 DifferentialBaseGUID,';
+   PRINT N'		 BackupTypeDescription,';
+   PRINT N'		 BackupSetGUID ';
+   PRINT N'	)'
+   PRINT N'	EXEC sp_executesql @backupInfoCommand';
+   PRINT N'';
+   PRINT N'	IF(EXISTS(SELECT * FROM #backupInfo AS bi WHERE bi.backupName LIKE ''' + @tailBackupName + N'''))BEGIN';
+   PRINT N'       PRINT N'''';';
+   PRINT N'	   PRINT N''Copy job successfully copied the Transaction Log Tail Backup. Starting restore job...'';';
+   PRINT N'       PRINT N'''';';
+   PRINT N'	   DELETE FROM #backupInfo;';
+   PRINT N'	END';
+   PRINT N'	ELSE BEGIN';
+   PRINT N'	   PRINT N'''';';
+   PRINT N'       PRINT N'''';';
+   PRINT N'	   PRINT N''' + quotename(@copyJobName) + N' did not copy over the Transaction Log Tail Backup. Check to make sure the timestamp within the file name follows the same format'';';
+   PRINT N'	   PRINT N'' as the backups output by the jobs themselves. This includes being in UTC. Quitting batch execution...'';';
+   PRINT N'       PRINT N'''';';
+   PRINT N'	   RETURN;';
+   PRINT N'	END;';
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''There was an issue while checking to make sure the transaction log was copied over. Rolling back and quitting batch execution.'';';
+   PRINT N'    PRINT N''There was an issue while checking to make sure the transaction log was copied over. Quitting batch execution.'';';
    PRINT N'    PRINT N'''';';
-   PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
@@ -837,7 +844,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'	      log_time > @start';
    PRINT N'	      AND l.message LIKE ''%Number of log backup files restored:%'';';
    PRINT N'';
-   PRINT N'	   SET @numRestored = REVERSE(LEFT(@num, CHARINDEX('':'', @num) - 2));';
+   PRINT N'	   SET @numRestored = REVERSE(LEFT(@message, CHARINDEX('':'', @message) - 2));'; --We reverse again to correct the order of the number (since the message is initially reversed)
    PRINT N'';
    PRINT N'	   PRINT N''Number of files restored: '' + @numRestored;';
    PRINT N'	END';
@@ -867,73 +874,46 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'		BEGIN';
    PRINT N'		   PRINT N''Transaction Log Tail Backup successfully restored.'';';
    PRINT N'	        PRINT N'''';';
-   PRINT N'		   COMMIT TRANSACTION;';
+   PRINT N'	        BEGIN TRY';
+   PRINT N'	            PRINT N'''';';
+   PRINT N'	            PRINT N''=================================='';';
+   PRINT N'	            PRINT N''Bringing ' + quotename(@databaseName) + N' online'';';
+   PRINT N'';
+   PRINT N'	            --Bring the database online. If the restore fails quit execution with error';
+   PRINT N'';
+   --PRINT N'                RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
+   PRINT N'';
+   PRINT N'	        END TRY';
+   PRINT N'	        BEGIN CATCH';
+   PRINT N'	            PRINT N''Error encountered while restoring ' + quotename(@databaseName) + N'. Quitting execution...'';';
+   PRINT N'	            PRINT N'''';';
+   PRINT N'	            RETURN;';
+   PRINT N'	        END CATCH;';
+   PRINT N'';
    PRINT N'		END';
    PRINT N'		ELSE BEGIN';
    PRINT N'		   PRINT N'''';';
-   PRINT N'		   PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Rolling back...'';';
+   PRINT N'		   PRINT N''' + quotename(@restoreJobName) + N' did not restore the Transaction Log Tail Backup. Quitting batch execution...'';';
    PRINT N'		   PRINT N'''';';
-   PRINT N'		   ROLLBACK TRANSACTION;';
    PRINT N'		   RETURN;';
    PRINT N'		END;';   
    PRINT N'    END';
    PRINT N'    ELSE BEGIN;';
    PRINT N'		 PRINT N'''';';
-   PRINT N'		 PRINT N''' + quotename(@restoreJobName) + N' did not restore any transaction logs. Rolling back and quitting batch execution...'';';
+   PRINT N'		 PRINT N''' + quotename(@restoreJobName) + N' did not restore any transaction logs. Quitting batch execution...'';';
    PRINT N'		 PRINT N'''';';
-   PRINT N'		 ROLLBACK TRANSACTION;';
    PRINT N'		 RETURN;';
    PRINT N'    END;';
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
    PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''And error was encountered while running/checking if ' + quotename(@restoreJobName) + N' restored the Transaction Tail Log Backup. Rolling Back and quitting batch execution...'';';
+   PRINT N'    PRINT N''And error was encountered while running/checking if ' + quotename(@restoreJobName) + N' restored the Transaction Tail Log Backup. Quitting batch execution...'';';
    PRINT N'	PRINT N'''';';
-   PRINT N'    ROLLBACK TRANSACTION;';
    PRINT N'    RETURN;';
    PRINT N'END CATCH;';
    PRINT N'';
    
-   raiserror('',0,1) WITH NOWAIT; --flush print buffer
-END;
-
-
-SET @databaseName = N'';
-
-PRINT N'--Now we restore the databases';
-PRINT N'';
-
-WHILE(EXISTS(SELECT * FROM @databases AS d WHERE @databaseName < d.database_name))BEGIN
-
-   SELECT TOP 1 
-      @databaseName = d.database_name 
-   FROM 
-      @databases AS d 
-   WHERE 
-      @databaseName < d.database_name 
-   ORDER BY 
-      d.database_name ASC;
-
-   PRINT N'GO';
-   PRINT N'';
-   PRINT N'BEGIN TRY';
-   PRINT N'    PRINT N'''';';
-   PRINT N'    PRINT N''=================================='';';
-   PRINT N'    PRINT N''Bringing ' + quotename(@databaseName) + N' online'';';
-   PRINT N'';
-   PRINT N'    --Bring the database online. If the restore fails quit execution with error';
-   PRINT N'';
-  -- PRINT N'    RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
-   PRINT N'';
-   PRINT N'END TRY';
-   PRINT N'BEGIN CATCH';
-   PRINT N'    PRINT N''Error encountered while restoring ' + quotename(@databaseName) + N'. Quitting execution...'';';
-   PRINT N'    PRINT N'''';';
-   PRINT N'    RETURN;';
-   PRINT N'END CATCH;';
-   PRINT N'';
-
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 END;
 

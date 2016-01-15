@@ -31,7 +31,7 @@ exec xp_instance_regread
  , @value      = @backupFilePath output;
 
 --if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\'; We're not appending to this
-
+use msdb
 declare @databases table (
    database_name    nvarchar(128) not null primary key clustered
 );
@@ -39,15 +39,17 @@ declare @databases table (
 insert into @databases (
    database_name
   )
-
 select 
    d.name as database_name
 from 
-   master.sys.databases as d
+   master.sys.databases as d left join log_shipping_primary_databases as lspd on (d.name = lspd.primary_database)
 where
-   (d.state_desc = N'ONLINE')
-   and ((@databaseFilter is null) 
-      or (d.name like N'%' + @databaseFilter + N'%'))
+   --Check to make sure the database isn''t already configured as a primary, is online, and is restored, and isn't a system db
+   lspd.primary_database is null 
+   and d.name not in (N'master', N'model', N'msdb', N'tempdb')
+   and d.state_desc = N'ONLINE'
+   and d.is_in_standby = 0
+   and d.is_read_only = 0
 order by
    d.name asc;
 
@@ -104,14 +106,14 @@ DECLARE  @secondary_server             SYSNAME,
 -- Set Defaults 
 --
 
-SET @secondary_server =  -- #INSERT
+SET @secondary_server = N'sql-logship-s' -- #INSERT, take out placeholder once testing is complete. It'd be good for the script to throw an error if these aren't filled
 SET @backup_directory = @backupFilePath; 
 SET @backup_share = @backupFilePath; 
-SET @backup_job_name = N'LSBackup_' + @@SERVERNAME; 
+SET @backup_job_name = N'LSBackup_'; -- Default is LSBackup_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
 SET @backup_retention_period = 4320;    -- the length of time in minutes to retain the log backup file in the backup directory
-SET @monitor_server =                  -- #INSERT         
+SET @monitor_server = N'P003666-DT'     -- #INSERT, take out placeholder once testing is complete.        
 SET @monitor_server_security_mode = 1;  -- How the job is to connect to the monitor server. 1 is by the job's proxy account (Windows authetication) 
-                                       --0 is a specific SQL Login
+                                        --0 is a specific SQL Login
 
 SET @backup_threshold = 60;          --The length of time, in minutes, after the last backup before a threshold_alert error is raised by the alert job
 SET @threshold_alert_enabled = 1;     --Whether or not a threshold_alert will be raised
@@ -135,7 +137,7 @@ SET @freq_recurrence_factor = 0;
 SET @active_start_date = 0;    -- A default is given if this value remains at 0
 SET @active_end_date = 99991231; -- December 31st 9999
 
--- The following two are the times during the day in which the backup job will run
+-- The following two make up the timespan during the day in which the backup job will run
 SET @active_start_time = 000000; -- 12:00:00 am
 SET @active_end_time = 235959;   -- 11:59:59 pm
 
@@ -179,10 +181,10 @@ PRINT N'-- Monitor Server Security Mode: ' + CAST(@monitor_server_security_mode 
 PRINT N'-- Backup Threshold: ' + CAST(@backup_threshold AS VARCHAR);
 PRINT N'-- Threshold Alert Enabled: ' + CAST(@threshold_alert_enabled AS VARCHAR);
 PRINT N'-- History Retention Period ' + CAST(@history_retention_period AS VARCHAR);
-PRINT N'-- Overwrite Pre-Existing Logshipping Configurations: ' + CAST(overwrite AS VARCHAR);
+PRINT N'-- Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR);
 PRINT N'-- Manually Run Primary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR);
 PRINT N'';
-PRINT N'-- And the following schedule defaults:';
+PRINT N'-- And the following job schedule defaults:';
 PRINT N'';
 PRINT N'Schedule Name: ' + @schedule_name;
 PRINT N'Schedule Enabled: ' + CAST(@enabled AS VARCHAR);
@@ -218,6 +220,7 @@ PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
 PRINT N'';
 
 SET @databaseName = N'';
+raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName ORDER BY database_name ASC)BEGIN
 
@@ -246,89 +249,70 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'';
    PRINT N'    SET @currentDate = cast((convert(nvarchar(8), CURRENT_TIMESTAMP, 112)) as int); --YYYYMMHH';
    PRINT N'';
-   PRINT N'    --Check to make sure the database isn''t already configured as a primary, is online, and has been restored';
-   PRINT N'';
-   PRINT N'    IF(EXISTS(';
-   PRINT N'        SELECT';
-   PRINT N'           *';
-   PRINT N'        FROM'; 
-   PRINT N'           master.sys.databases AS d LEFT JOIN log_shipping_primary_databases AS lspd ON (d.name = lspd.primary_database)';
-   PRINT N'        WHERE';
-   PRINT N'           d.name = N''' + @databaseName + N'''';
-   PRINT N'           AND lspd.primary_database IS NULL';
-   PRINT N'           AND d.state_desc = ''ONLINE''';
-   PRINT N'           AND d.is_in_standby = 0';
-   PRINT N'           AND d.is_read_only = 0';
-   PRINT N'    ))BEGIN';
-   PRINT N'';
-   PRINT N'         EXEC @SP_Add_RetCode = master.dbo.sp_add_log_shipping_primary_database'; 
-   PRINT N'            @database = N''' + @databaseName + N''''; 
-   PRINT N'           ,@backup_directory = N''' + @backupPath + N'''';
-   PRINT N'           ,@backup_share = N''' + @backupPath + N''''; 
-   PRINT N'           ,@backup_job_name = N''LSBackup_' + @databaseName + N''''; 
-   PRINT N'           ,@backup_retention_period = ' + CAST(@backupRetention  AS VARCHAR);
-   PRINT N'           ,@monitor_server = N''' + @monitorServer + N'''';
-   PRINT N'           ,@monitor_server_security_mode = 1';
-   PRINT N'           ,@backup_threshold = ' + CAST(@backup_threshold AS VARCHAR);
-   PRINT N'           ,@threshold_alert_enabled = ' + CAST(@thresholdAlert AS VARCHAR);
-   PRINT N'           ,@history_retention_period = ' + CAST(@historyRetention AS VARCHAR);
-   PRINT N'           ,@backup_job_id = @LS_BackupJobId OUTPUT';
-   PRINT N'           ,@primary_id = @LS_PrimaryId OUTPUT';
-   PRINT N'           ,@overwrite = 1';
-   PRINT N'           ,@ignoreremotemonitor = 1';
+   PRINT N'    EXEC @SP_Add_RetCode = master.dbo.sp_add_log_shipping_primary_database'; 
+   PRINT N'       @database = N''' + @databaseName + N''''; 
+   PRINT N'      ,@backup_directory = N''' + @backup_directory + N'''';
+   PRINT N'      ,@backup_share = N''' + @backup_share + N''''; 
+   PRINT N'      ,@backup_job_name = N''' + @backup_job_name + @databaseName + N''''; 
+   PRINT N'      ,@backup_retention_period = ' + CAST(@backup_retention_period  AS VARCHAR);
+   PRINT N'      ,@monitor_server = N''' + @monitor_server + N'''';
+   PRINT N'      ,@monitor_server_security_mode = ' + CAST(@monitor_server_security_mode AS VARCHAR);
+   PRINT N'      ,@backup_threshold = ' + CAST(@backup_threshold AS VARCHAR);
+   PRINT N'      ,@threshold_alert_enabled = ' + CAST(@threshold_alert_enabled AS VARCHAR);
+   PRINT N'      ,@history_retention_period = ' + CAST(@history_retention_period AS VARCHAR);
+   PRINT N'      ,@backup_job_id = @LS_BackupJobId OUTPUT';
+   PRINT N'      ,@primary_id = @LS_PrimaryId OUTPUT';
+   PRINT N'      ,@overwrite = ' + CAST(@overwrite AS VARCHAR);
+   PRINT N'      ,@ignoreremotemonitor = ' + CAST(@ignoreremotemonitor AS VARCHAR);
    PRINT N'';
    PRINT N'';
-   PRINT N'         IF (@@ERROR = 0 AND @SP_Add_RetCode = 0)';
-   PRINT N'         BEGIN';
+   PRINT N'    IF (@@ERROR = 0 AND @SP_Add_RetCode = 0)';
+   PRINT N'    BEGIN';
    PRINT N'';
-   PRINT N'             SET @LS_BackUpScheduleUID = NULL';
-   PRINT N'             SET @LS_BackUpScheduleID = NULL'; 
+   PRINT N'        SET @LS_BackUpScheduleUID = NULL';
+   PRINT N'        SET @LS_BackUpScheduleID = NULL'; 
    PRINT N'';
    PRINT N'';
-   PRINT N'             EXEC msdb.dbo.sp_add_schedule';
-   PRINT N'                        @schedule_name =N''LSBackupSchedule_' + lower(@secondaryServer) + N'1' + N''''; --The 1 is kept from the original configuration
-   PRINT N'                        ,@enabled = ' + CAST(@enabled as VARCHAR);
-   PRINT N'                        ,@freq_type = ' + CAST(@freqType AS VARCHAR);
-   PRINT N'                        ,@freq_interval = ' + CAST(@freqInterval AS VARCHAR);
-   PRINT N'                        ,@freq_subday_type = ' + CAST(@freqSubday AS VARCHAR);
-   PRINT N'                        ,@freq_subday_interval = ' + CAST(@freqSubdayInterval AS VARCHAR);
-   PRINT N'                        ,@freq_recurrence_factor = ' + CAST(@freqRecurrent AS VARCHAR);
-   PRINT N'                        ,@active_start_date = ' + CAST(@active_start_date AS VARCHAR); 
-   PRINT N'                        ,@active_end_date = ' + CAST(@active_end_date AS VARCHAR);
-   PRINT N'                        ,@active_start_time = ' + CAST(@active_start_time AS VARCHAR);
-   PRINT N'                        ,@active_end_time = ' + CAST(@active_end_time AS VARCHAR);
-   PRINT N'                        ,@schedule_uid = @LS_BackUpScheduleUID OUTPUT';
-   PRINT N'                        ,@schedule_id = @LS_BackUpScheduleID OUTPUT';
+   PRINT N'        EXEC msdb.dbo.sp_add_schedule';
+   PRINT N'                   @schedule_name = N''' + @schedule_name + N''''; 
+   PRINT N'                   ,@enabled = ' + CAST(@enabled as VARCHAR);
+   PRINT N'                   ,@freq_type = ' + CAST(@freq_type AS VARCHAR);
+   PRINT N'                   ,@freq_interval = ' + CAST(@freq_interval AS VARCHAR);
+   PRINT N'                   ,@freq_subday_type = ' + CAST(@freq_subday_type AS VARCHAR);
+   PRINT N'                   ,@freq_subday_interval = ' + CAST(@freq_subday_interval AS VARCHAR);
+   PRINT N'                   ,@freq_recurrence_factor = ' + CAST(@freq_recurrence_factor AS VARCHAR);
+   PRINT N'                   ,@active_start_date = ' + CAST(@active_start_date AS VARCHAR); 
+   PRINT N'                   ,@active_end_date = ' + CAST(@active_end_date AS VARCHAR);
+   PRINT N'                   ,@active_start_time = ' + CAST(@active_start_time AS VARCHAR);
+   PRINT N'                   ,@active_end_time = ' + CAST(@active_end_time AS VARCHAR);
+   PRINT N'                   ,@schedule_uid = @LS_BackUpScheduleUID OUTPUT';
+   PRINT N'                   ,@schedule_id = @LS_BackUpScheduleID OUTPUT';
    PRINT N'';
-   PRINT N'             EXEC msdb.dbo.sp_attach_schedule';
-   PRINT N'                        @job_id = @LS_BackupJobId';
-   PRINT N'                        ,@schedule_id = @LS_BackUpScheduleID';
+   PRINT N'        EXEC msdb.dbo.sp_attach_schedule';
+   PRINT N'                   @job_id = @LS_BackupJobId';
+   PRINT N'                   ,@schedule_id = @LS_BackUpScheduleID';
    PRINT N'';
-   PRINT N'             EXEC msdb.dbo.sp_update_job'; 
-   PRINT N'                        @job_id = @LS_BackupJobId';
-   PRINT N'                        ,@enabled = 1';
+   PRINT N'        EXEC msdb.dbo.sp_update_job'; 
+   PRINT N'                   @job_id = @LS_BackupJobId';
+   PRINT N'                   ,@enabled = ' + @enabled;
    PRINT N'';
-   PRINT N'         END'; 
+   PRINT N'    END'; 
    PRINT N'';
-   PRINT N'         ELSE BEGIN';
-   PRINT N'             PRINT N''Issue adding job schedule for ' + quotename(@databaseName) + N', quitting batch execution...'';';
-   PRINT N'             RETURN;';
-   PRINT N'         END;';
-   PRINT N'';
-   PRINT N'         EXEC master.dbo.sp_add_log_shipping_primary_secondary';
-   PRINT N'                     @primary_database = N''' + @databaseName + N'''';
-   PRINT N'                    ,@secondary_server = N''' + @@SERVERNAME + N''''; 
-   PRINT N'                    ,@secondary_database = N''' + @originalPrimary + N'''';
-   PRINT N'                    ,@overwrite = 1';
-   PRINT N'';
-   PRINT N' 	      PRINT N''Logshipping successfully configured'';';
-   PRINT N'          PRINT N'''';';
-   PRINT N'';
-   PRINT N'    END';
    PRINT N'    ELSE BEGIN';
-   PRINT N'       PRINT N''' + quotename(@databaseName) + N' is either offline, not yet restored, or is already configured as a primary. Skipping...'';';
-   PRINT N'       PRINT N'''';';
+   PRINT N'        PRINT N''Issue adding job schedule for ' + quotename(@databaseName) + N', quitting batch execution...'';';
+   PRINT N'        RETURN;';
    PRINT N'    END;';
+   PRINT N'';
+   PRINT N'    EXEC master.dbo.sp_add_log_shipping_primary_secondary';
+   PRINT N'                @primary_database = N''' + @databaseName + N'''';
+   PRINT N'               ,@secondary_server = N''' + @secondary_server + N''''; 
+   PRINT N'               ,@secondary_database = N''' + @databaseName + N'''';
+   PRINT N'               ,@overwrite = ' + CAST(@overwrite AS VARCHAR);
+   PRINT N'';
+   PRINT N'   PRINT N''Logshipping successfully configured'';';
+   PRINT N'     PRINT N'''';';
+   PRINT N'';
+
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
