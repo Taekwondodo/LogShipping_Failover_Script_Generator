@@ -18,7 +18,6 @@ declare @backupFilePath nvarchar(260)
       , @exclude_system bit;
 
 set @debug = 1;
-set @exclude_system = 0;
 
 --set @databaseFilter = N'Footprints';
 
@@ -44,7 +43,7 @@ select
 from 
    master.sys.databases as d left join log_shipping_primary_databases as lspd on (d.name = lspd.primary_database)
 where
-   --Check to make sure the database isn''t already configured as a primary, is online, and is restored, and isn't a system db
+   --Check to make sure the database isn''t already configured as a primary, is online, restored, and isn't a system db
    lspd.primary_database is null 
    and d.name not in (N'master', N'model', N'msdb', N'tempdb')
    and d.state_desc = N'ONLINE'
@@ -69,10 +68,10 @@ if (@debug = 1) begin
 end;
 
 /*
-Configuring logshipping involves setting up a lot of variables.
+Configuring logshipping involves setting up a number of variables.
 To limit the amount of values you need to manually enter on the output script, you can setup defaults here that will be applied to all of the database logshipping configurations.
 Then you can change the values for specific databases that require unique values in the output script.
-The variables (that can) will initially be set to the default values as Microsoft sets them when they output a logshipping script
+The variables (that can) will initially be set to the default values as Microsoft sets them when they generate a logshipping script
 The rest will require input on your part and will be tagged with a #INSERT
 */
 
@@ -109,15 +108,15 @@ DECLARE  @secondary_server             SYSNAME,
 SET @secondary_server = N'sql-logship-s' -- #INSERT, take out placeholder once testing is complete. It'd be good for the script to throw an error if these aren't filled
 SET @backup_directory = @backupFilePath; 
 SET @backup_share = @backupFilePath; 
-SET @backup_job_name = N'LSBackup_'; -- Default is LSBackup_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
+SET @backup_job_name = N'LSBackup_';    -- Default is LSBackup_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
 SET @backup_retention_period = 4320;    -- the length of time in minutes to retain the log backup file in the backup directory
 SET @monitor_server = N'P003666-DT'     -- #INSERT, take out placeholder once testing is complete.        
 SET @monitor_server_security_mode = 1;  -- How the job is to connect to the monitor server. 1 is by the job's proxy account (Windows authetication) 
                                         --0 is a specific SQL Login
 
-SET @backup_threshold = 60;          --The length of time, in minutes, after the last backup before a threshold_alert error is raised by the alert job
+SET @backup_threshold = 60;           --The length of time, in minutes, after the last backup before a threshold_alert error is raised by the alert job
 SET @threshold_alert_enabled = 1;     --Whether or not a threshold_alert will be raised
-SET @history_retention_period = 5760;--Length of time in minutes in which the history will be retained (Default is 4 days)
+SET @history_retention_period = 5760; --Length of time in minutes in which the history will be retained (Default is 4 days)
 SET @overwrite = 1;                   --Whether or not to overwrite a previous logship config for this instance
 SET @ignoreremotemonitor = 1;         --Whether or not to try and use the linked server to configure the monitor from the primary server (Hasn't worked in testing)
     
@@ -125,7 +124,7 @@ SET @schedule_name = N'LSBackupSchedule_' + @@SERVERNAME + N'1'  -- Name does no
 SET @enabled = 1 --Whether or not jobs will run on this schedule
 
 -- https://msdn.microsoft.com/en-us/library/ms187320.aspx --for the next 6
--- The default as it is here has the backup job running every 15 minutes
+-- The default as it is here has the backup job running every 15 minutes 24 hours a day
 SET @freq_type = 4;
 SET @freq_interval = 1;
 SET @freq_subday_type = 4;
@@ -134,7 +133,7 @@ SET @freq_relative_interval = 0;
 SET @freq_recurrence_factor = 0;
 
 -- The following two are the dates in which the job will start and stop (permanently) running
-SET @active_start_date = 0;    -- A default is given if this value remains at 0
+SET @active_start_date = 0;    -- A default is given (timestamp when the script is run) if this value remains at 0
 SET @active_end_date = 99991231; -- December 31st 9999
 
 -- The following two make up the timespan during the day in which the backup job will run
@@ -151,8 +150,8 @@ SET @databaseName = N'';
 
 PRINT N'/*';
 PRINT N'*****RUN ON ' + quotename(@@SERVERNAME) + N'*****';
-PRINT N'Use the following script to attempt to configure failover logshipping for the following databases as primaries on ' + quotename(@@SERVERNAME) + N':';
-PRINT N'*/';
+PRINT N'Use the following script to configure the following databases as logshipping primaries on ' + quotename(@@SERVERNAME) + N':';
+PRINT N'';
 
 WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName) BEGIN
 
@@ -165,26 +164,26 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
 
    ORDER BY d.database_name ASC;
 
-   PRINT N'-- ' + quotename(@databaseName);
+   PRINT quotename(@databaseName);
 
 END;     
 
 PRINT N'';
-PRINT N'-- With the following logshipping defaults:';
+PRINT N'With the following logshipping defaults:';
 PRINT N'';
-PRINT N'-- Secondary Server: ' + @secondary_server;
-PRINT N'-- Monitor Server: ' +  @monitor_server;
-PRINT N'-- Backup Directory: ' + @backup_directory;
-PRINT N'-- Backup Share: ' + @backup_share;
-PRINT N'-- Backup Retention Period: ' + CAST(@backup_retention_period AS VARCHAR);
-PRINT N'-- Monitor Server Security Mode: ' + CAST(@monitor_server_security_mode AS VARCHAR);
-PRINT N'-- Backup Threshold: ' + CAST(@backup_threshold AS VARCHAR);
-PRINT N'-- Threshold Alert Enabled: ' + CAST(@threshold_alert_enabled AS VARCHAR);
-PRINT N'-- History Retention Period ' + CAST(@history_retention_period AS VARCHAR);
-PRINT N'-- Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR);
-PRINT N'-- Manually Run Primary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR);
+PRINT N'Secondary Server: ' + @secondary_server;
+PRINT N'Monitor Server: ' +  @monitor_server;
+PRINT N'Backup Directory: ' + @backup_directory;
+PRINT N'Backup Share: ' + @backup_share;
+PRINT N'Backup Retention Period: ' + CAST(@backup_retention_period AS VARCHAR);
+PRINT N'Monitor Server Security Mode: ' + CAST(@monitor_server_security_mode AS VARCHAR);
+PRINT N'Backup Threshold: ' + CAST(@backup_threshold AS VARCHAR);
+PRINT N'Threshold Alert Enabled: ' + CAST(@threshold_alert_enabled AS VARCHAR);
+PRINT N'History Retention Period ' + CAST(@history_retention_period AS VARCHAR);
+PRINT N'Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR);
+PRINT N'Manually Run Primary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR);
 PRINT N'';
-PRINT N'-- And the following job schedule defaults:';
+PRINT N'And the following job schedule defaults (https://msdn.microsoft.com/en-us/library/ms187320.aspx for reference):';
 PRINT N'';
 PRINT N'Schedule Name: ' + @schedule_name;
 PRINT N'Schedule Enabled: ' + CAST(@enabled AS VARCHAR);
@@ -199,8 +198,10 @@ PRINT N'Active End Date: ' + CAST(@active_end_date AS VARCHAR);
 PRINT N'Active Start Time: ' + CAST(@active_start_time AS VARCHAR);
 PRINT N'Active End Time: ' + CAST(@active_end_time AS VARCHAR);
 
-PRINT N'--';
-PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'';
+PRINT N'Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'*/';
+PRINT N'';
 PRINT N'--================================';
 PRINT N'';
 PRINT N'USE msdb';
@@ -217,7 +218,6 @@ PRINT N'    DROP TABLE #elapsedTime';
 PRINT N'';
 PRINT N'CREATE TABLE #elapsedTime (timestamps datetime);';
 PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
-PRINT N'';
 
 SET @databaseName = N'';
 raiserror('',0,1) WITH NOWAIT; --flush print buffer
@@ -233,12 +233,14 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    ORDER BY 
    database_name ASC;
 
+   PRINT N'--********Primary Logshipping for ' + quotename(@databaseName) + N'********--';
+   PRINT N'';
    PRINT N'GO';
    PRINT N'';
    PRINT N'BEGIN TRY';
    PRINT N'';  
    PRINT N'    PRINT N''=================================='';';
-   PRINT N'    PRINT N''Beginning failover logshipping configuration on ' + quotename(@databaseName) + N''';';
+   PRINT N'    PRINT N''Beginning primary logshipping configuration on ' + quotename(@databaseName) + N''';';
    PRINT N'';
    PRINT N'    DECLARE @LS_BackupJobId           AS uniqueidentifier'; 
    PRINT N'           ,@LS_PrimaryId           AS uniqueidentifier'; 
@@ -294,7 +296,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'';
    PRINT N'        EXEC msdb.dbo.sp_update_job'; 
    PRINT N'                   @job_id = @LS_BackupJobId';
-   PRINT N'                   ,@enabled = ' + @enabled;
+   PRINT N'                   ,@enabled = ' + CAST(@enabled AS VARCHAR);
    PRINT N'';
    PRINT N'    END'; 
    PRINT N'';
@@ -309,8 +311,8 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'               ,@secondary_database = N''' + @databaseName + N'''';
    PRINT N'               ,@overwrite = ' + CAST(@overwrite AS VARCHAR);
    PRINT N'';
-   PRINT N'   PRINT N''Logshipping successfully configured'';';
-   PRINT N'     PRINT N'''';';
+   PRINT N'   PRINT N''Logshipping successfully configured.'';';
+   PRINT N'   PRINT N'''';';
    PRINT N'';
 
    PRINT N'';
@@ -324,8 +326,24 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'    EXEC sp_delete_job @job_id = @LS_BackupJobID';
    PRINT N'    RETURN;';
    PRINT N'END CATCH';
+   PRINT N'';
 
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
-
 END
+
+PRINT N'GO';
+PRINT N'';
+PRINT N'--Print elapsed time';
+PRINT N'';
+PRINT N'DECLARE @startTime DATETIME;';
+PRINT N'SELECT TOP 1 @startTime = timestamps FROM #elapsedTime;';
+PRINT N'';
+PRINT N'PRINT N''Total Elapsed Time: '' +  STUFF(CONVERT(NVARCHAR(12), CURRENT_TIMESTAMP - @startTime, 14), 9, 1, ''.''); --hh:mi:ss.mmm';
+PRINT N'';
+PRINT N'PRINT N'''';';
+PRINT N'PRINT N''*****Primary Logshipping of databases on ' + quotename(@@SERVERNAME) + N' complete. Continue to Primary Monitor Logshipping*****'';';
+PRINT N'';
+PRINT N'DROP TABLE #elapsedTime';
+
+--End of script, proceed to Primary Monitor Logshipping
