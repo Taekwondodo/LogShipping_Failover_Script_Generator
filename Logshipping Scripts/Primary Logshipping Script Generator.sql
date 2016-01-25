@@ -30,7 +30,9 @@ exec xp_instance_regread
  , @value      = @backupFilePath output;
 
 --if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\'; We're not appending to this
+
 use msdb
+
 declare @databases table (
    database_name    nvarchar(128) not null primary key clustered
 );
@@ -105,23 +107,23 @@ DECLARE  @secondary_server             SYSNAME,
 -- Set Defaults 
 --
 
-SET @secondary_server = N'sql-logship-s' -- #INSERT, take out placeholder once testing is complete. It'd be good for the script to throw an error if these aren't filled
+SET @secondary_server = ;               -- #INSERT
 SET @backup_directory = @backupFilePath; 
 SET @backup_share = @backupFilePath; 
 SET @backup_job_name = N'LSBackup_';    -- Default is LSBackup_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
 SET @backup_retention_period = 4320;    -- the length of time in minutes to retain the log backup file in the backup directory
-SET @monitor_server = N'P003666-DT'     -- #INSERT, take out placeholder once testing is complete.        
+SET @monitor_server = ;                 -- #INSERT
 SET @monitor_server_security_mode = 1;  -- How the job is to connect to the monitor server. 1 is by the job's proxy account (Windows authetication) 
                                         --0 is a specific SQL Login
 
 SET @backup_threshold = 60;           --The length of time, in minutes, after the last backup before a threshold_alert error is raised by the alert job
 SET @threshold_alert_enabled = 1;     --Whether or not a threshold_alert will be raised
 SET @history_retention_period = 5760; --Length of time in minutes in which the history will be retained (Default is 4 days)
-SET @overwrite = 1;                   --Whether or not to overwrite a previous logship config for this instance
-SET @ignoreremotemonitor = 1;         --Whether or not to try and use the linked server to configure the monitor from the primary server (Hasn't worked in testing)
+SET @overwrite = 1;                   --Whether or not to overwrite a previous logship config for this instance, 1 = True
+SET @ignoreremotemonitor = 1;         --Whether or not to try and use the linked server to configure the monitor from the primary server (Hasn't worked in testing), 1 = ignore (Manually run script on monitor server)
     
 SET @schedule_name = N'LSBackupSchedule_' + @@SERVERNAME + N'1'  -- Name does not have to be unique
-SET @enabled = 1 --Whether or not jobs will run on this schedule
+SET @enabled = 1 --Whether or not jobs will run on this schedule, 1 = Run
 
 -- https://msdn.microsoft.com/en-us/library/ms187320.aspx --for the next 6
 -- The default as it is here has the backup job running every 15 minutes 24 hours a day
@@ -180,7 +182,7 @@ PRINT N'Monitor Server Security Mode: ' + CAST(@monitor_server_security_mode AS 
 PRINT N'Backup Threshold: ' + CAST(@backup_threshold AS VARCHAR);
 PRINT N'Threshold Alert Enabled: ' + CAST(@threshold_alert_enabled AS VARCHAR);
 PRINT N'History Retention Period ' + CAST(@history_retention_period AS VARCHAR);
-PRINT N'Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR);
+PRINT N'Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR) + N', 0 = Don''t Overwrite, 1 = Overwrite';
 PRINT N'Manually Run Primary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR);
 PRINT N'';
 PRINT N'And the following job schedule defaults (https://msdn.microsoft.com/en-us/library/ms187320.aspx for reference):';
@@ -240,7 +242,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'BEGIN TRY';
    PRINT N'';  
    PRINT N'    PRINT N''=================================='';';
-   PRINT N'    PRINT N''Beginning primary logshipping configuration on ' + quotename(@databaseName) + N''';';
+   PRINT N'    PRINT N''Beginning primary logshipping configuration for ' + quotename(@databaseName) + N''';';
    PRINT N'';
    PRINT N'    DECLARE @LS_BackupJobId           AS uniqueidentifier'; 
    PRINT N'           ,@LS_PrimaryId           AS uniqueidentifier'; 
