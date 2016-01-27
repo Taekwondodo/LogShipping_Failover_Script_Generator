@@ -32,7 +32,7 @@ set @debug = 1;
 --
 
 declare @primaryDefaults table (
-  ,primary_id                    uniqueidentifier not null primary key clustered
+   primary_id                    uniqueidentifier not null primary key clustered
   ,database_name                 nvarchar(128) not null 
   ,backup_source_directory       nvarchar(500) not null
   ,file_retention_period         int not null
@@ -44,7 +44,7 @@ declare @primaryDefaults table (
   ,freq_type                     int not null
   ,freq_interval                 int not null
   ,freq_subday_type              int not null
-  ,freq_relative_interval        int not null
+  ,freq_subday_interval        int not null
   ,freq_recurrence_factor        int not null
   ,active_start_date             int not null
   ,active_end_date               int not null
@@ -55,7 +55,7 @@ declare @primaryDefaults table (
 INSERT INTO @primaryDefaults
 
 SELECT 
-  ,lsmp.primary_id AS primary_id
+   lsmp.primary_id AS primary_id
   ,lsmp.primary_database AS database_name
   ,lspd.backup_directory AS backup_source_directory
   ,lspd.backup_retention_period AS file_retention_period
@@ -67,7 +67,7 @@ SELECT
   ,ss.freq_type AS freq_type
   ,ss.freq_interval AS freq_interval
   ,ss.freq_subday_type AS freq_subday_type
-  ,ss.freq_relative_interval AS freq_relative_interval
+  ,ss.freq_subday_interval AS freq_subday_interval
   ,ss.freq_recurrence_factor AS freq_recurrence_factor
   ,ss.active_start_date AS active_start_date
   ,ss.active_end_date AS active_end_date
@@ -117,7 +117,7 @@ DECLARE   @secondaryServer          SYSNAME
          ,@restore_delay            INT
          ,@restore_all              BIT
          ,@restore_mode             BIT
-         ,disconnect_users          BIT;
+         ,@disconnect_users          BIT;
          
 --
 -- Set Defaults 
@@ -155,7 +155,7 @@ DECLARE @databaseName               NVARCHAR(128)
        ,@freqType                   NVARCHAR(10)
        ,@freqInterval               NVARCHAR(10)
        ,@freqSubdayType             NVARCHAR(10)
-       ,@freqRelativeInterval       NVARCHAR(10)
+       ,@freqSubdayInterval       NVARCHAR(10)
        ,@freqRecurrenceFactor       NVARCHAR(10)
        ,@activeStartDate            NVARCHAR(8)
        ,@activeEndDate              NVARCHAR(8)
@@ -190,13 +190,13 @@ PRINT N'With the following logshipping defaults:';
 PRINT N'';
 PRINT N'Copy Jobs'' Schedule Name: ' + @copy_schedule_name;
 PRINT N'Restore Jobs'' Schedule Name: ' + @restore_schedule_name;
-PRINT N'Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR) + N' -- 0 = Don''t Overwrite, 1 = Overwrite';
-PRINT N'Manually Run Primary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR) + N' -- 0 = Configure through linked server, 1 = Manually Run';
+PRINT N'Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR) + N'  --0 = Don''t Overwrite, 1 = Overwrite';
+PRINT N'Manually Run Secondary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR) + N'  --0 = Configure through linked server, 1 = Manually Run';
 PRINT N'Schedules Enabled: ' + CAST(@enabled AS VARCHAR);
 PRINT N'Restore Delay In Minutes: ' + CAST(@restore_delay AS VARCHAR);
-PRINT N'Restore All Setting: ' + CAST(@restore_all AS VARCHAR) + N' -- 1 = Restore All availalbe logs, 0 = Restore 1 log then quit';
-PRINT N'Restore Mode: ' + CAST(@restore_mode AS VARCHAR) + N' -- 0 = NORECOVERY, 1 = STANDBY';
-PRINT N'Disconnect Users During Restore: '+ CAST(@disconnect_users AS VARCHAR) + N' -- 0 = yes, 1 = no';
+PRINT N'Restore All Setting: ' + CAST(@restore_all AS VARCHAR) + N'  --1 = Restore All availabe logs for a database, 0 = Restore 1 log then quit';
+PRINT N'Restore Mode: ' + CAST(@restore_mode AS VARCHAR) + N'  --0 = NORECOVERY, 1 = STANDBY';
+PRINT N'Disconnect Users During Restore: '+ CAST(@disconnect_users AS VARCHAR) + N'  --0 = yes, 1 = no';
 PRINT N'';
 PRINT N'Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
 PRINT N'*/';
@@ -210,13 +210,12 @@ PRINT N'';
 PRINT N'PRINT N''Beginning Secondary Logshipping Configurations...'';';
 PRINT N'PRINT N'''';';
 PRINT N'';
-PRINT N'-- #elapsedTime is used to keep track of the total execution time of the script';
+PRINT N'-- #elapsedTimeAndFilePath is used to keep track of the total execution time of the script, along with holding the backup destination file path across batches ';
 PRINT N'';
-PRINT N'IF OBJECT_ID(''tempdb.dbo.#elapsedTime'', ''U'') IS NOT NULL';
-PRINT N'    DROP TABLE #elapsedTime';
+PRINT N'IF OBJECT_ID(''tempdb.dbo.#elapsedTimeAndFilePath'', ''U'') IS NOT NULL';
+PRINT N'    DROP TABLE #elapsedTimeAndFilePath';
 PRINT N'';
-PRINT N'CREATE TABLE #elapsedTime (timestamps datetime);';
-PRINT N'INSERT INTO #elapsedTime SELECT CURRENT_TIMESTAMP;';
+PRINT N'CREATE TABLE #elapsedTimeAndFilePath (timestamps DATETIME, file_path NVARCHAR(500));';
 PRINT N'';
 PRINT N'DECLARE @backupDestinationFilePath NVARCHAR(500);'
 PRINT N'';
@@ -228,8 +227,10 @@ PRINT N' , @value      = @backupDestinationFilePath OUTPUT;';
 PRINT N'';
 PRINT N'--The destination for the log backups that the copy job retrieves by default is determined by the local registry (xp_instance_regread above).'
 PRINT N'--If you''d like to provide another default file path, uncomment the following SET statement to override the location provided by the registry.';
-PRINT N'';
 PRINT N'--SET @backupDestinationFilePath = ;';
+PRINT N'';
+PRINT N'INSERT INTO #elapsedTimeAndFilePath SELECT CURRENT_TIMESTAMP, @backupDestinationFilePath;';
+PRINT N'';
 
 SET @databaseName = N'';
 raiserror('',0,1) WITH NOWAIT; --flush print buffer
@@ -248,7 +249,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
      ,@freqType = freq_type
      ,@freqInterval = freq_interval
      ,@freqSubdayType = freq_subday_type
-     ,@freqRelativeInterval = freq_relative_interval
+     ,@freqSubdayInterval = freq_subday_interval
      ,@freqRecurrenceFactor = freq_recurrence_factor
      ,@activeStartDate = active_start_date
      ,@activeEndDate = active_end_date
@@ -276,6 +277,9 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'	DECLARE @LS_Secondary__RestoreJobId	AS uniqueidentifier ';
    PRINT N'	DECLARE @LS_Secondary__SecondaryId	AS uniqueidentifier ';
    PRINT N'	DECLARE @LS_Add_RetCode	As int ';
+   PRINT N'    DECLARE @backupDestinationFilePath AS NVARCHAR(500)';
+   PRINT N'';
+   PRINT N'    SELECT TOP 1 @backupDestinationFilePath = file_path FROM #elapsedTimeAndFilePath;';
    PRINT N'';
    PRINT N'';
    PRINT N'	EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary ';
@@ -288,7 +292,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'			,@file_retention_period = ' + @fileRetentionPeriod;
    PRINT N'			,@monitor_server = N''' + @monitorServer + N'''';
    PRINT N'			,@monitor_server_security_mode = ' + @monitorServerSecurityMode;
-   PRINT N'			,@overwrite = ' + @overwrite;
+   PRINT N'			,@overwrite = ' + CAST(@overwrite AS VARCHAR);
    PRINT N'			,@copy_job_id = @LS_Secondary__CopyJobId OUTPUT ';
    PRINT N'			,@restore_job_id = @LS_Secondary__RestoreJobId OUTPUT ';
    PRINT N'			,@secondary_id = @LS_Secondary__SecondaryId OUTPUT ';
@@ -302,7 +306,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'';
    PRINT N'		EXEC msdb.dbo.sp_add_schedule ';
    PRINT N'				@schedule_name =N''' + @copy_schedule_name + N'''';
-   PRINT N'				,@enabled = ' + @enabled;
+   PRINT N'				,@enabled = ' + CAST(@enabled AS VARCHAR);
    PRINT N'				,@freq_type = ' + @freqType;
    PRINT N'				,@freq_interval = ' + @freqInterval;
    PRINT N'				,@freq_subday_type = ' + @freqSubdayType;
@@ -325,7 +329,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'';
    PRINT N'		EXEC msdb.dbo.sp_add_schedule ';
    PRINT N'				@schedule_name =N''' + @restore_schedule_name + N'''';
-   PRINT N'				,@enabled = ' + @enabled;
+   PRINT N'				,@enabled = ' + CAST(@enabled AS VARCHAR);
    PRINT N'				,@freq_type = ' + @freqType;
    PRINT N'				,@freq_interval = ' + @freqInterval;
    PRINT N'				,@freq_subday_type = ' + @freqSubdayType;
@@ -344,6 +348,9 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'';
    PRINT N'';
    PRINT N'	END ';
+   PRINT N'    ELSE BEGIN';
+   PRINT N'        RAISERROR(N''There was an issue while executing [master.dbo.sp_add_log_shipping_secondary_primary] for %s. Throwing error...'',11,1,N''' + quotename(@databaseName) + N''') WITH NOWAIT;';
+   PRINT N'    END;';
    PRINT N'';
    PRINT N'';
    PRINT N'	DECLARE @LS_Add_RetCode2	As int ';
@@ -367,6 +374,9 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'';
    PRINT N'';
    PRINT N'	END ';
+   PRINT N'    ELSE BEGIN';
+   PRINT N'        RAISERROR(N''There was an issue while configuring the job schedules for %s. Throwing error...'',11,1,N''' + quotename(@databaseName) + N''') WITH NOWAIT;';
+   PRINT N'    END;';
    PRINT N'';
    PRINT N'';
    PRINT N'	IF (@@error = 0 AND @LS_Add_RetCode = 0) ';
@@ -381,15 +391,36 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'			  ,@enabled = 1 ';
    PRINT N'';
    PRINT N'	END ';
+   PRINT N'    ELSE BEGIN';
+   PRINT N'        RAISERROR(N''There was an issue while executing [master.dbo.sp_add_log_shipping_secondary_database] for %s. Throwing error...'',11,1,N''' + quotename(@databaseName) + N''') WITH NOWAIT;';
+   PRINT N'    END;';
+   PRINT N'';
+   PRINT N'    PRINT N''' + quotename(@databaseName) + N' successfully configured as a logshipping secondary.'';';
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
-   PRINT N'    PRINT N''There was an issue configuring logshipping on ' + quotename(@databaseName) + N'. Quitting batch execution and cleaning up artifacts...'';';
    PRINT N'    PRINT N'''';';
-   PRINT N'    DELETE FROM log_shipping_primary_databases WHERE primary_database = N''' + @databaseName + N''';';
-   PRINT N'    DELETE FROM log_shipping_monitor_primary WHERE primary_database = N''' + @databaseName + N''';';
-   PRINT N'    DELETE FROM log_shipping_primary_secondaries WHERE secondary_database = N''' + @databaseName + N''';';
-   PRINT N'    EXEC sp_delete_job @job_id = @LS_BackupJobID';
+   PRINT N'    PRINT N''There was an issue configuring logshipping for ' + quotename(@databaseName) + N'. Quitting batch execution and cleaning up artifacts...'';';
+   PRINT N'    PRINT N'''';';
+   PRINT N'';
+   PRINT N'    SELECT';
+   PRINT N'        ERROR_NUMBER() AS ErrorNumber,'
+   PRINT N'        ERROR_SEVERITY() AS ErrorSeverity,'
+   PRINT N'        ERROR_STATE() as ErrorState,'
+   PRINT N'        ERROR_PROCEDURE() as ErrorProcedure,'
+   PRINT N'        ERROR_LINE() as ErrorLine,'
+   PRINT N'        ERROR_MESSAGE() as ErrorMessage;'
+   PRINT N'';
+   PRINT N'    --Clean up artifacts';
+   PRINT N'    DELETE FROM log_shipping_secondary_databases WHERE secondary_database = N''' + @databaseName + N''';';
+   PRINT N'    DELETE FROM log_shipping_monitor_secondary WHERE secondary_database = N''' + @databaseName + N''';';
+   PRINT N'    IF (@LS_Secondary__SecondaryId IS NOT NULL)';
+   PRINT N'       DELETE FROM log_shipping_secondary WHERE secondary_id = @LS_Secondary__SecondaryId';
+   PRINT N'    IF (@LS_Secondary__CopyJobId IS NOT NULL)';
+   PRINT N'       EXEC sp_delete_job @job_id = @LS_Secondary__CopyJobId';
+   PRINT N'    IF (@LS_Secondary__RestoreJobId IS NOT NULL)';
+   PRINT N'       EXEC sp_delete_job @job_id = @LS_Secondary__RestoreJobId';
+   PRINT N'';
    PRINT N'    RETURN;';
    PRINT N'END CATCH';
    PRINT N'';
@@ -403,13 +434,13 @@ PRINT N'';
 PRINT N'--Print elapsed time';
 PRINT N'';
 PRINT N'DECLARE @startTime DATETIME;';
-PRINT N'SELECT TOP 1 @startTime = timestamps FROM #elapsedTime;';
+PRINT N'SELECT TOP 1 @startTime = timestamps FROM #elapsedTimeAndFilePath;';
 PRINT N'';
 PRINT N'PRINT N''Total Elapsed Time: '' +  STUFF(CONVERT(NVARCHAR(12), CURRENT_TIMESTAMP - @startTime, 14), 9, 1, ''.''); --hh:mi:ss.mmm';
 PRINT N'';
 PRINT N'PRINT N'''';';
-PRINT N'PRINT N''*****Primary Logshipping of databases on ' + quotename(@@SERVERNAME) + N' complete. Continue to Primary Monitor Logshipping*****'';';
+PRINT N'PRINT N''*****Secondary Logshipping of databases on ' + quotename(@secondaryServer) + N' complete. Continue to Secondary Monitor Logshipping*****'';';
 PRINT N'';
-PRINT N'DROP TABLE #elapsedTime';
+PRINT N'DROP TABLE #elapsedTimeAndFilePath';
 
---End of script, proceed to Primary Monitor Logshipping
+--End of script, proceed to Secondary Monitor Logshipping

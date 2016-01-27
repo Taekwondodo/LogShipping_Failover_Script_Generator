@@ -247,11 +247,8 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'    DECLARE @LS_BackupJobId           AS uniqueidentifier'; 
    PRINT N'           ,@LS_PrimaryId           AS uniqueidentifier'; 
    PRINT N'           ,@SP_Add_RetCode           As int';
-   PRINT N'           ,@currentDate           AS int --Needs to be YYYYMMHH format';
    PRINT N'           ,@LS_BackUpScheduleUID  AS uniqueidentifier';
    PRINT N'           ,@LS_BackUpScheduleID   AS int';
-   PRINT N'';
-   PRINT N'    SET @currentDate = cast((convert(nvarchar(8), CURRENT_TIMESTAMP, 112)) as int); --YYYYMMHH';
    PRINT N'';
    PRINT N'    EXEC @SP_Add_RetCode = master.dbo.sp_add_log_shipping_primary_database'; 
    PRINT N'       @database = N''' + @databaseName + N''''; 
@@ -312,6 +309,8 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'               ,@secondary_server = N''' + @secondary_server + N''''; 
    PRINT N'               ,@secondary_database = N''' + @databaseName + N'''';
    PRINT N'               ,@overwrite = ' + CAST(@overwrite AS VARCHAR);
+   PRINT N''
+   PRINT N'    -- Create a backup for the secondary databases to be created from';
    PRINT N'';
    PRINT N'   PRINT N''Logshipping successfully configured.'';';
    PRINT N'   PRINT N'''';';
