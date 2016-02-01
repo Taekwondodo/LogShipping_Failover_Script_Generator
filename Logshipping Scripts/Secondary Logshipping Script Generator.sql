@@ -262,7 +262,65 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    ORDER BY 
       database_name ASC;
 
+   -- We need to create the databases that will be used for logshipping if they do not exist
 
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'PRINT N''Creating secondary database ' + quotename(@databaseName) + N''';';
+   PRINT N'';
+   PRINT N' -- We need to create the databases that will be used for logshipping if they do not exist, then restore them with the backups from the primary databases';
+   PRINT N'';
+   PRINT N'-- Retreive the default locations for db and log files';
+   PRINT N'';
+   PRINT N'DECLARE @defaultData NVARCHAR(500)';
+   PRINT N'       ,@defaultLog  NVARCHAR(500);';
+   PRINT N'';
+   PRINT N'exec xp_instance_regread';
+   PRINT N'   @rootkey    = ''HKEY_LOCAL_MACHINE''';
+   PRINT N' , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
+   PRINT N' , @value_name = ''DefaultData''';
+   PRINT N' , @value      = @defaultData output;';
+   PRINT N'';
+   PRINT N'exec xp_instance_regread';
+   PRINT N'   @rootkey    = ''HKEY_LOCAL_MACHINE''';
+   PRINT N' , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
+   PRINT N' , @value_name = ''DefaultLog''';
+   PRINT N' , @value      = @defaultLog output;';
+   PRINT N'';
+   PRINT N'IF (@defaultData NOT LIKE N''%\'')';
+   PRINT N'    SET @defaultData = @defaultData + N''\'';';
+   PRINT N'IF (@defaultLog NOT LIKE N''%\'')';
+   PRINT N'    SET @defaultLog = @defaultLog + N''\'';';
+   PRINT N'';
+   PRINT N'SET @defaultData = @defaultData + N''' + @databaseName + N'.mdf'';';
+   PRINT N'SET @defaultLog = @defaultLog + N''' + @databaseName + N'_log.ldf'';';
+   PRINT N'';
+   PRINT N'IF (NOT EXISTS(SELECT * FROM master.sys.databases WHERE name = ' + @databaseName + N'))BEGIN';
+   PRINT N'';
+   PRINT N'    CREATE DATABASE ' + quotename(@databaseName) + N' ON  PRIMARY';
+   PRINT N'    ( NAME = N''' + @databaseName + N''', FILENAME =  @defaultData, SIZE = 2048KB , FILEGROWTH = 1024KB )';
+   PRINT N'       LOG ON ';
+   PRINT N'    ( NAME = N''' + @databaseName + N'_Log'', FILENAME = @defaultLog, SIZE = 1024KB , FILEGROWTH = 10%)';    
+   PRINT N'';
+   PRINT N'END;';
+   PRINT N'';
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'PRINT N''Restoring ' + quotename(@databaseName) + N' with backup from primary database'';';
+   PRINT N'';
+   PRINT N' --Restore the databases with the backups from their respective primary databases';
+   PRINT N'';
+   PRINT N'DECLARE @backupName NVARCHAR(500)';
+   PRINT N'SELECT TOP 1 @backupName = file_path FROM #elapsedTimeAndFilePath';
+   PRINT N'';
+   PRINT N'IF (@backupName NOT LIKE N''%\'')';
+   PRINT N'    SET @backupName = @backupName + N''\'';';
+   PRINT N'SET @backupName = @backupName + ' + @databaseName + N'_InitLSBackup''';
+   PRINT N'';
+   PRINT N'RESTORE DATABASE ' + quotename(@databaseName) + N' FROM  DISK = @backupName WITH FILE = 1, NOUNLOAD, REPLACE, STATS = 5;';
+   PRINT N'';
+   PRINT N'PRINT N'''';';
+   PRINT N'';
    PRINT N'--********Secondary Logshipping for ' + quotename(@databaseName) + N'********--';
    PRINT N'';
    PRINT N'GO';
@@ -412,6 +470,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'        ERROR_MESSAGE() as ErrorMessage;'
    PRINT N'';
    PRINT N'    --Clean up artifacts';
+   PRINT N'';
    PRINT N'    DELETE FROM log_shipping_secondary_databases WHERE secondary_database = N''' + @databaseName + N''';';
    PRINT N'    DELETE FROM log_shipping_monitor_secondary WHERE secondary_database = N''' + @databaseName + N''';';
    PRINT N'    IF (@LS_Secondary__SecondaryId IS NOT NULL)';

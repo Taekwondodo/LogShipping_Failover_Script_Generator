@@ -310,12 +310,9 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'               ,@secondary_database = N''' + @databaseName + N'''';
    PRINT N'               ,@overwrite = ' + CAST(@overwrite AS VARCHAR);
    PRINT N''
-   PRINT N'    -- Create a backup for the secondary databases to be created from';
    PRINT N'';
    PRINT N'   PRINT N''Logshipping successfully configured.'';';
    PRINT N'   PRINT N'''';';
-   PRINT N'';
-
    PRINT N'';
    PRINT N'END TRY';
    PRINT N'BEGIN CATCH';
@@ -328,7 +325,21 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'    RETURN;';
    PRINT N'END CATCH';
    PRINT N'';
-
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'-- Create full database backup for secondary instance databases to restore from';
+   PRINT N'';
+   PRINT N'PRINT N''Creating full database backup for ' + quotename(@databaseName) + N''';';
+   PRINT N'PRINT N'''';';
+   PRINT N'';
+   PRINT N'BACKUP DATABASE ' + @databaseName
+   PRINT N'TO DISK = N''' + @backup_directory + N'\' + @databaseName + N'_InitLSBackup''';
+   PRINT N'WITH FORMAT,';
+   PRINT N'      MEDIANAME = N''Test_InitLSBackup'',';
+   PRINT N'      NAME = N''Test Initial LS Backup'';';
+   PRINT N'';
+   PRINT N'PRINT N'''';';
+   
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 END
