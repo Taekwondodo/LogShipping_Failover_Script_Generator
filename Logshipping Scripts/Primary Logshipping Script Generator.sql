@@ -29,7 +29,7 @@ exec xp_instance_regread
  , @value_name = 'BackupDirectory'
  , @value      = @backupFilePath output;
 
---if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\'; We're not appending to this
+if (@backupFilePath not like N'\\%') set @backupFilePath = N'\\' + @@SERVERNAME + N'\' + REPLACE(@backupFilePath, N':', N'$'); 
 
 use msdb
 
@@ -67,6 +67,8 @@ if (@debug = 1) begin
    order by
       d.database_name;
 
+   select @backupFilePath as backup_file_path;
+      
 end;
 
 /*
@@ -107,12 +109,12 @@ DECLARE  @secondary_server             SYSNAME,
 -- Set Defaults 
 --
 
-SET @secondary_server = ;               -- #INSERT
+SET @secondary_server = N'sql-logship-s';               -- #INSERT #REMOVE
 SET @backup_directory = @backupFilePath; 
 SET @backup_share = @backupFilePath; 
 SET @backup_job_name = N'LSBackup_';    -- Default is LSBackup_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
 SET @backup_retention_period = 4320;    -- the length of time in minutes to retain the log backup file in the backup directory
-SET @monitor_server = ;                 -- #INSERT
+SET @monitor_server = N'P003666-DT' ;                 -- #INSERT #REMOVE
 SET @monitor_server_security_mode = 1;  -- How the job is to connect to the monitor server. 1 is by the job's proxy account (Windows authetication) 
                                         --0 is a specific SQL Login
 
@@ -185,7 +187,7 @@ PRINT N'History Retention Period ' + CAST(@history_retention_period AS VARCHAR);
 PRINT N'Overwrite Pre-Existing Logshipping Configurations: ' + CAST(@overwrite AS VARCHAR) + N', 0 = Don''t Overwrite, 1 = Overwrite';
 PRINT N'Manually Run Primary Monitor Script: ' + CAST(@ignoreremotemonitor AS VARCHAR);
 PRINT N'';
-PRINT N'And the following job schedule defaults (https://msdn.microsoft.com/en-us/library/ms187320.aspx for reference):';
+PRINT N'And the following job schedule defaults. Link for reference: (https://msdn.microsoft.com/en-us/library/ms187320.aspx):';
 PRINT N'';
 PRINT N'Schedule Name: ' + @schedule_name;
 PRINT N'Schedule Enabled: ' + CAST(@enabled AS VARCHAR);
@@ -333,10 +335,10 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'BACKUP DATABASE ' + @databaseName
-   PRINT N'TO DISK = N''' + @backup_directory + N'\' + @databaseName + N'_InitLSBackup''';
+   PRINT N'TO DISK = N''' + @backup_directory + N'\' + @databaseName + N'_InitLSBackup.bak''';
    PRINT N'WITH FORMAT,';
-   PRINT N'      MEDIANAME = N''Test_InitLSBackup'',';
-   PRINT N'      NAME = N''Test Initial LS Backup'';';
+   PRINT N'      MEDIANAME = N''' + @databaseName + N'_InitLSBackup'',';
+   PRINT N'      NAME = N''' + @databaseName + N' Initial LS Backup'';';
    PRINT N'';
    PRINT N'PRINT N'''';';
    

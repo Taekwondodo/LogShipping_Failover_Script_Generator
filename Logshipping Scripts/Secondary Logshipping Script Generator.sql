@@ -44,7 +44,7 @@ declare @primaryDefaults table (
   ,freq_type                     int not null
   ,freq_interval                 int not null
   ,freq_subday_type              int not null
-  ,freq_subday_interval        int not null
+  ,freq_subday_interval          int not null
   ,freq_recurrence_factor        int not null
   ,active_start_date             int not null
   ,active_end_date               int not null
@@ -73,12 +73,10 @@ SELECT
   ,ss.active_end_date AS active_end_date
   ,ss.active_start_time AS active_start_time
   ,ss.active_end_time AS active_end_time
-  
 FROM 
    log_shipping_monitor_primary AS lsmp INNER JOIN log_shipping_primary_databases AS lspd ON (lsmp.primary_id = lspd.primary_id)
    INNER JOIN sysjobschedules AS sjs ON (lspd.backup_job_id = sjs.job_id)
    INNER JOIN sysschedules AS ss ON (sjs.schedule_id = ss.schedule_id)
-
 ORDER BY
    lsmp.primary_database ASC;
 
@@ -117,7 +115,7 @@ DECLARE   @secondaryServer          SYSNAME
          ,@restore_delay            INT
          ,@restore_all              BIT
          ,@restore_mode             BIT
-         ,@disconnect_users          BIT;
+         ,@disconnect_users         BIT;
          
 --
 -- Set Defaults 
@@ -128,7 +126,7 @@ SELECT TOP 1 @secondaryServer = lsps.secondary_server FROM log_shipping_primary_
 
 SET @copy_job_name = N'LSCopy_' + LOWER(@@SERVERNAME) + N'_';       -- Default is LSCopy_primaryServerName_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
 SET @restore_job_name = N'LSRestore_' + LOWER(@@SERVERNAME) + N'_'; -- Default is LSRestore_primaryServerName_databaseName. The full string is defined within the script. This variable functions as a prefix to the database name
-SET @copy_schedule_name = N'LSCopySchedule_' + @secondaryServer + N'1' -- Name does not have to be unique
+SET @copy_schedule_name = N'LSCopySchedule_' + @secondaryServer + N'1'        -- Name does not have to be unique
 SET @restore_schedule_name = N'LSRestoreSchedule_' + @secondaryServer + N'1'  -- Name does not have to be unique
 SET @overwrite = 1;              -- Whether or not to overwrite a previous logship config for this instance, 1 = overwrite
 SET @ignoreremotemonitor = 1;    -- Whether or not to try and use the linked server to configure the monitor from the secondary server (Hasn't worked in testing), 1 = ignore (Manually run script on monitor server)
@@ -155,7 +153,7 @@ DECLARE @databaseName               NVARCHAR(128)
        ,@freqType                   NVARCHAR(10)
        ,@freqInterval               NVARCHAR(10)
        ,@freqSubdayType             NVARCHAR(10)
-       ,@freqSubdayInterval       NVARCHAR(10)
+       ,@freqSubdayInterval         NVARCHAR(10)
        ,@freqRecurrenceFactor       NVARCHAR(10)
        ,@activeStartDate            NVARCHAR(8)
        ,@activeEndDate              NVARCHAR(8)
@@ -167,7 +165,7 @@ SET @databaseName = N'';
 
 PRINT N'/*';
 PRINT N'*****RUN ON ' + quotename(@secondaryServer) + N'*****';
-PRINT N'Use the following script to configure/create the following databases as logshipping secondaries on ' + quotename(@secondaryServer) + N':';
+PRINT N'Use the following script to configure (and create if necessary) the following databases as logshipping secondaries on ' + quotename(@secondaryServer) + N':';
 PRINT N'';
 
 WHILE EXISTS(SELECT * FROM @primaryDefaults AS d WHERE d.database_name > @databaseName) BEGIN
@@ -186,7 +184,7 @@ WHILE EXISTS(SELECT * FROM @primaryDefaults AS d WHERE d.database_name > @databa
 END;     
 
 PRINT N'';
-PRINT N'With the following logshipping defaults:';
+PRINT N'With the following secondary-specific logshipping defaults:';
 PRINT N'';
 PRINT N'Copy Jobs'' Schedule Name: ' + @copy_schedule_name;
 PRINT N'Restore Jobs'' Schedule Name: ' + @restore_schedule_name;
@@ -225,7 +223,7 @@ PRINT N' , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
 PRINT N' , @value_name = ''BackupDirectory''';
 PRINT N' , @value      = @backupDestinationFilePath OUTPUT;';
 PRINT N'';
-PRINT N'--The destination for the log backups that the copy job retrieves by default is determined by the local registry (xp_instance_regread above).'
+PRINT N'--The destination for the log backups that the copy job retrieves is by default determined by the local registry via xp_instance_regread above.'
 PRINT N'--If you''d like to provide another default file path, uncomment the following SET statement to override the location provided by the registry.';
 PRINT N'--SET @backupDestinationFilePath = ;';
 PRINT N'';
@@ -262,63 +260,94 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    ORDER BY 
       database_name ASC;
 
+   -- Make sure the backup source directory 
+
    -- We need to create the databases that will be used for logshipping if they do not exist
 
    PRINT N'GO';
    PRINT N'';
-   PRINT N'PRINT N''Creating secondary database ' + quotename(@databaseName) + N''';';
+   PRINT N'BEGIN TRY';
    PRINT N'';
-   PRINT N' -- We need to create the databases that will be used for logshipping if they do not exist, then restore them with the backups from the primary databases';
+   PRINT N'	PRINT N''Creating secondary database ' + quotename(@databaseName) + N''';';
    PRINT N'';
-   PRINT N'-- Retreive the default locations for db and log files';
+   PRINT N'	-- We need to create the databases that will be used for logshipping if they do not exist, then restore them with the backups from the primary databases';
    PRINT N'';
-   PRINT N'DECLARE @defaultData NVARCHAR(500)';
-   PRINT N'       ,@defaultLog  NVARCHAR(500);';
+   PRINT N'	-- Retreive the default locations for db and log files';
    PRINT N'';
-   PRINT N'exec xp_instance_regread';
-   PRINT N'   @rootkey    = ''HKEY_LOCAL_MACHINE''';
-   PRINT N' , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
-   PRINT N' , @value_name = ''DefaultData''';
-   PRINT N' , @value      = @defaultData output;';
+   PRINT N'	DECLARE @defaultData NVARCHAR(500)';
+   PRINT N'	       ,@defaultLog  NVARCHAR(500);';
    PRINT N'';
-   PRINT N'exec xp_instance_regread';
-   PRINT N'   @rootkey    = ''HKEY_LOCAL_MACHINE''';
-   PRINT N' , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
-   PRINT N' , @value_name = ''DefaultLog''';
-   PRINT N' , @value      = @defaultLog output;';
+   PRINT N'	exec xp_instance_regread';
+   PRINT N'	   @rootkey    = ''HKEY_LOCAL_MACHINE''';
+   PRINT N'	 , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
+   PRINT N'	 , @value_name = ''DefaultData''';
+   PRINT N'	 , @value      = @defaultData output;';
    PRINT N'';
-   PRINT N'IF (@defaultData NOT LIKE N''%\'')';
-   PRINT N'    SET @defaultData = @defaultData + N''\'';';
-   PRINT N'IF (@defaultLog NOT LIKE N''%\'')';
-   PRINT N'    SET @defaultLog = @defaultLog + N''\'';';
+   PRINT N'	exec xp_instance_regread';
+   PRINT N'	   @rootkey    = ''HKEY_LOCAL_MACHINE''';
+   PRINT N'	 , @key        = ''Software\Microsoft\MSSQLServer\MSSQLServer''';
+   PRINT N'	 , @value_name = ''DefaultLog''';
+   PRINT N'	 , @value      = @defaultLog output;';
    PRINT N'';
-   PRINT N'SET @defaultData = @defaultData + N''' + @databaseName + N'.mdf'';';
-   PRINT N'SET @defaultLog = @defaultLog + N''' + @databaseName + N'_log.ldf'';';
+   PRINT N'	IF (@defaultData NOT LIKE N''%\'')';
+   PRINT N'	    SET @defaultData = @defaultData + N''\'';';
+   PRINT N'	IF (@defaultLog NOT LIKE N''%\'')';
+   PRINT N'	    SET @defaultLog = @defaultLog + N''\'';';
    PRINT N'';
-   PRINT N'IF (NOT EXISTS(SELECT * FROM master.sys.databases WHERE name = ' + @databaseName + N'))BEGIN';
+   PRINT N'	SET @defaultData = @defaultData + N''' + @databaseName + N'.mdf'';';
+   PRINT N'	SET @defaultLog = @defaultLog + N''' + @databaseName + N'_log.ldf'';';
    PRINT N'';
-   PRINT N'    CREATE DATABASE ' + quotename(@databaseName) + N' ON  PRIMARY';
-   PRINT N'    ( NAME = N''' + @databaseName + N''', FILENAME =  @defaultData, SIZE = 2048KB , FILEGROWTH = 1024KB )';
-   PRINT N'       LOG ON ';
-   PRINT N'    ( NAME = N''' + @databaseName + N'_Log'', FILENAME = @defaultLog, SIZE = 1024KB , FILEGROWTH = 10%)';    
+   PRINT N'	IF (NOT EXISTS(SELECT * FROM master.sys.databases WHERE name = ' + @databaseName + N'))BEGIN';
    PRINT N'';
-   PRINT N'END;';
+   PRINT N'	    CREATE DATABASE ' + quotename(@databaseName) + N' ON  PRIMARY';
+   PRINT N'	    ( NAME = N''' + @databaseName + N''', FILENAME = @defaultData, SIZE = 2048KB , FILEGROWTH = 1024KB )';
+   PRINT N'	       LOG ON ';
+   PRINT N'        ( NAME = N''' + @databaseName + N'_Log'', FILENAME = @defaultLog, SIZE = 1024KB , FILEGROWTH = 10%)';    
    PRINT N'';
-   PRINT N'GO';
+   PRINT N'	    IF (@@ERROR <> 0)';
+   PRINT N'	      raiserror(N''There was an issue while creating %s. Throwing error...'',11,1,N''' + quotename(@databaseName) + N''') WITH NOWAIT';
    PRINT N'';
-   PRINT N'PRINT N''Restoring ' + quotename(@databaseName) + N' with backup from primary database'';';
+   PRINT N'	    PRINT N''' + quotename(@databaseName) + N' successfully created.'';';
+   PRINT N'	    PRINT N'''';';
+   PRINT N'	END;';
+   PRINT N'';
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'    PRINT N'''';';
+   PRINT N'    PRINT N''There was an issue  ' + quotename(@databaseName) + N'. Quitting batch execution and cleaning up artifacts...'';';
+   PRINT N'    PRINT N'''';';
+   PRINT N'';
+   PRINT N'    SELECT';
+   PRINT N'        ERROR_NUMBER() AS ErrorNumber,'
+   PRINT N'        ERROR_SEVERITY() AS ErrorSeverity,'
+   PRINT N'        ERROR_STATE() as ErrorState,'
+   PRINT N'        ERROR_PROCEDURE() as ErrorProcedure,'
+   PRINT N'        ERROR_LINE() as ErrorLine,'
+   PRINT N'        ERROR_MESSAGE() as ErrorMessage;'
+   PRINT N'';
+   PRINT N'';
+   PRINT N'    RETURN;';
+   PRINT N'END CATCH';
+   PRINT N'';
+   PRINT N'PRINT N''Restoring ' + quotename(@databaseName) + N' with backup from primary database...'';';
    PRINT N'';
    PRINT N' --Restore the databases with the backups from their respective primary databases';
+
+   DECLARE @initialBackupPath NVARCHAR(128);
+
+   IF (@backupSourceDirectory NOT LIKE N'%\')
+      SET @initialBackupPath = @backupSourceDirectory + N'\';
+   SET @initialBackupPath = @initialBackupPath + @databaseName + N'_InitLSBackup.bak';
+
    PRINT N'';
-   PRINT N'DECLARE @backupName NVARCHAR(500)';
-   PRINT N'SELECT TOP 1 @backupName = file_path FROM #elapsedTimeAndFilePath';
+   PRINT N'RESTORE DATABASE ' + quotename(@databaseName) + N' FROM DISK = N''' + @initialBackupPath + N''' WITH FILE = 1, NOUNLOAD, REPLACE, STATS = 5;';
    PRINT N'';
-   PRINT N'IF (@backupName NOT LIKE N''%\'')';
-   PRINT N'    SET @backupName = @backupName + N''\'';';
-   PRINT N'SET @backupName = @backupName + ' + @databaseName + N'_InitLSBackup''';
+   PRINT N'IF (@@ERROR <> 0) BEGIN';
+   PRINT N'    PRINT N''There was an issue while attempting to restore ' + quotename(@databaseName) + N'. Quitting batch execution...'';';
+   PRINT N'    RETURN;';
+   PRINT N'END;';
    PRINT N'';
-   PRINT N'RESTORE DATABASE ' + quotename(@databaseName) + N' FROM  DISK = @backupName WITH FILE = 1, NOUNLOAD, REPLACE, STATS = 5;';
-   PRINT N'';
+   PRINT N'PRINT N''' + quotename(@databaseName) + N' successfully restored. Beginning logshipping...'';';
    PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'--********Secondary Logshipping for ' + quotename(@databaseName) + N'********--';
