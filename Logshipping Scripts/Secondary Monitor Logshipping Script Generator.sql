@@ -1,8 +1,8 @@
 /*
 
-This script is run on the primary server of the logshipping setup.
+This script is run on the secondary server of the logshipping setup.
 
-Use this script to produce a T-SQL script to setup the monitor server in a logshipping configuration for the primary instances
+Use this script to produce a T-SQL script to setup the monitor server in a logshipping configuration for the secondary instances
 
 */
 
@@ -18,37 +18,43 @@ set @debug = 1;
 --============================
 
 declare @databases table (
-   primary_id                    uniqueidentifier primary key not null
+   secondary_id                  uniqueidentifier primary key not null
   ,database_name                 nvarchar(128) not null
+  ,primary_server                nvarchar(128) not null
+  ,primary_database              nvarchar(128) not null
   ,monitor_server_security_mode  bit not null
-  ,backup_threshold              int not null
+  ,restore_threshold             int not null
   ,threshold_alert               int not null
   ,threshold_alert_enabled       bit not null
   ,history_retention_period      int not null
 );
 
 insert into @databases(
-   primary_id
+   secondary_id
   ,database_name
+  ,primary_server
+  ,primary_database
   ,monitor_server_security_mode
-  ,backup_threshold
+  ,restore_threshold
   ,threshold_alert
   ,threshold_alert_enabled
   ,history_retention_period
 )
 
 select
-   lsmp.primary_id 
-  ,lsmp.primary_database as database_name
-  ,lspd.monitor_server_security_mode
-  ,lsmp.backup_threshold
-  ,lsmp.threshold_alert
-  ,lsmp.threshold_alert_enabled
-  ,lsmp.history_retention_period
+   lsms.secondary_id 
+  ,lsms.secondary_database as database_name
+  ,lsms.primary_server
+  ,lsms.primary_database
+  ,lss.monitor_server_security_mode
+  ,lsms.restore_threshold
+  ,lsms.threshold_alert
+  ,lsms.threshold_alert_enabled
+  ,lsms.history_retention_period
 from 
-   log_shipping_monitor_primary as lsmp inner join log_shipping_primary_databases as lspd on (lsmp.primary_id = lspd.primary_id)
+   log_shipping_monitor_secondary as lsms inner join log_shipping_secondary as lss on (lsms.secondary_id = lss.secondary_id)
 order by
-   lsmp.primary_database asc;
+   lsms.secondary_database asc;
 
 if (@debug = 1)
    select * from @databases
@@ -57,11 +63,11 @@ if (@debug = 1)
 declare @databaseName  nvarchar(128)
        ,@monitorServer nvarchar(128)
 set @databaseName = N'';
-select top 1 @monitorServer = monitor_server from log_shipping_primary_databases;
+select top 1 @monitorServer = monitor_server from log_shipping_secondary;
 
 print N'--*****RUN ON ' + quotename(@monitorServer) + N'*****--';
 print N'';
-print N'-- This script configures ' + quotename(@monitorServer) + N' for the following databases of the primary logshipping configuation on ' + quotename(@@SERVERNAME) + N':';
+print N'-- This script configures ' + quotename(@monitorServer) + N' for the following databases of their secondary logshipping configuation on ' + quotename(@@SERVERNAME) + N':';
 print N'';
 
 while (exists(select top 1 * from @databases as d where d.database_name > @databaseName order by d.database_name asc))begin
@@ -88,7 +94,7 @@ PRINT N'USE msdb';
 PRINT N'';
 PRINT N'SET nocount, arithabort, xact_abort on';
 PRINT N'';
-PRINT N'PRINT N''Beginning Primary Monitor Logshipping Configurations...'';';
+PRINT N'PRINT N''Beginning Secondary Monitor Logshipping Configurations...'';';
 PRINT N'';
 PRINT N'-- #elapsedTime is used to keep track of the total execution time of the script';
 PRINT N'';
@@ -104,9 +110,11 @@ raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 SET @databaseName = N'';
 
-  declare @primaryID              nvarchar(64)
+  declare @secondaryID            nvarchar(64)
+  ,@primaryServer                 nvarchar(128)
+  ,@primaryDatabase               nvarchar(128)
   ,@monitorServerSecurityMode     nvarchar(1)
-  ,@backupThreshold               nvarchar(10) 
+  ,@restoreThreshold              nvarchar(10) 
   ,@thresholdAlert                nvarchar(10)
   ,@thresholdAlertEnabled         nvarchar(10) 
   ,@historyRetentionPeriod        nvarchar(10);
@@ -114,10 +122,12 @@ SET @databaseName = N'';
 while (exists(select top 1 * from @databases as d where d.database_name > @databaseName order by database_name asc))begin
 
    select top 1
-      @primaryID = d.primary_id
+      @secondaryID = d.secondary_id
      ,@databaseName = d.database_name
+     ,@primaryServer = d.primary_server
+     ,@primaryDatabase = d.primary_database
      ,@monitorServerSecurityMode = d.monitor_server_security_mode
-     ,@backupThreshold = d.backup_threshold
+     ,@restoreThreshold = d.restore_threshold
      ,@thresholdAlert = d.threshold_alert
      ,@thresholdAlertEnabled = d.threshold_alert_enabled
      ,@historyRetentionPeriod = d.history_retention_period
@@ -136,17 +146,19 @@ while (exists(select top 1 * from @databases as d where d.database_name > @datab
    print N'print N''Starting logshipping for ' + quotename(@databaseName) + N''';';
    print N'';
    print N'begin transaction;';
-   print N'   EXEC msdb.dbo.sp_processlogshippingmonitorprimary ';
+   print N'   EXEC msdb.dbo.sp_processlogshippingmonitorsecondary ';
    print N'		 @mode = 1 ';
-   print N'		,@primary_id = N''' + @primaryID + N'''';
-   print N'		,@primary_server = N''' + @@SERVERNAME + N'''';
-   print N'		,@monitor_server = N''' + @monitorServer + N'''';
-   print N'		,@monitor_server_security_mode = ' + @monitorServerSecurityMode;
-   print N'		,@primary_database = N''' + @databaseName + N'''';
-   print N'		,@backup_threshold = ' + @backupThreshold;
+   print N'		,@secondary_server = N''' + @@SERVERNAME + N'''';
+   print N'         ,@secondary_database = N''' + @databaseName + N'''';
+   print N'		,@secondary_id = N''' + @secondaryID + N'''';
+   print N'         ,@primary_server = N''' + @primaryServer + N'''';
+   print N'         ,@primary_database = N''' + @primaryDatabase + N'''';
+   print N'		,@restore_threshold = ' + @restoreThreshold;
    print N'		,@threshold_alert = ' + @thresholdAlert;
    print N'		,@threshold_alert_enabled = ' + @thresholdAlertEnabled;
    print N'		,@history_retention_period = ' + @historyRetentionPeriod;
+   print N'		,@monitor_server = N''' + @monitorServer + N'''';
+   print N'		,@monitor_server_security_mode = ' + @monitorServerSecurityMode;
    print N'';
    print N'    if (@@ERROR = 0) begin';
    print N'       print N''Logshipping for ' + quotename(@databaseName) + N' successful.'';';
@@ -159,7 +171,7 @@ while (exists(select top 1 * from @databases as d where d.database_name > @datab
    print N'       rollback transaction;';
    print N'    end;';
 
-   raiserror('',0,1) WITH NOWAIT;
+   raiserror('',0,1) WITH NOWAIT; -- flush print buffer
 end
 
 print N'go';
@@ -173,7 +185,7 @@ print N'print N'''';';
 print N'print N''Total Elapsed Time: '' + STUFF(CONVERT(NVARCHAR(12), CURRENT_TIMESTAMP - @startTime, 14), 9,1,''.''); --hh:mi:ss.mmm';
 print N'';
 print N'print N'''';';
-print N'print N''*****Primary Monitor Logshipping of databases on ' + quotename(@@SERVERNAME) + N' complete. Continue to Secondary Logshipping*****'';';
+print N'print N''*****Secondary Monitor Logshipping of databases on ' + quotename(@@SERVERNAME) + N' complete. Logshipping has been completed.*****'';';
 print N'';
 print N'drop table #elapsedTime';
 
