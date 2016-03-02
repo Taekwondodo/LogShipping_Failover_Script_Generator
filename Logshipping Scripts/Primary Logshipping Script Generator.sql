@@ -327,20 +327,6 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'    RETURN;';
    PRINT N'END CATCH';
    PRINT N'';
-   PRINT N'GO';
-   PRINT N'';
-   PRINT N'-- Create full database backup for secondary instance databases to restore from';
-   PRINT N'';
-   PRINT N'PRINT N''Creating full database backup for ' + quotename(@databaseName) + N''';';
-   PRINT N'PRINT N'''';';
-   PRINT N'';
-   PRINT N'BACKUP DATABASE ' + @databaseName
-   PRINT N'TO DISK = N''' + @backup_directory + N'\' + @databaseName + N'_InitLSBackup.bak''';
-   PRINT N'WITH FORMAT,';
-   PRINT N'      MEDIANAME = N''' + @databaseName + N'_InitLSBackup'',';
-   PRINT N'      NAME = N''' + @databaseName + N' Initial LS Backup'';';
-   PRINT N'';
-   PRINT N'PRINT N'''';';
    
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 

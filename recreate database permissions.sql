@@ -7,7 +7,7 @@ Specify the database context in the use statement below to inspect the desired d
 
 */
 
-use i2b2workdata;
+use PerformanceTest;
 go
 
 set nocount on;
@@ -21,14 +21,14 @@ declare @recreate_logins bit;
 declare @compatibility_level int;
 
 set @compatibility_level = 90;
-set @debug = 0;
+set @debug = 1;
 
 set @include_role_members = 0;
 set @include_role_parents = 1;
-set @include_system_objects = 1;
+set @include_system_objects = 0;
 set @recreate_logins = 1;
 
-set @principal_name = N'i2b2workdata';
+--set @principal_name = N'PerformanceTest';
 
 --set @principal_name = N'tsgUser';
 
@@ -301,7 +301,7 @@ if (@debug = 1) begin
           , sp.name;
 
 end;
-
+   
 if (@recreate_logins = 1) begin
 
    if (@debug = 1) begin
@@ -1074,4 +1074,4 @@ print N'   commit transaction;';
 print N'end else begin';
 print N'   print N''Principal recreation failed!'';'; 
 print N'end;';
-print N'';6
+print N'';
