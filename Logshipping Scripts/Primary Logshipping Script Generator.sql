@@ -23,13 +23,20 @@ set @debug = 1;
 
 --================================
 
+-- Commenting the default backup directory code since the actual setup will involve a single directory on the network, not each instance's individual backup location
+
+/*
 exec xp_instance_regread
    @rootkey    = 'HKEY_LOCAL_MACHINE'
  , @key        = 'Software\Microsoft\MSSQLServer\MSSQLServer'
  , @value_name = 'BackupDirectory'
  , @value      = @backupFilePath output;
+*/
+
+set @backupFilePath = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups';
 
 if (@backupFilePath not like N'\\%') set @backupFilePath = N'\\' + @@SERVERNAME + N'\' + REPLACE(@backupFilePath, N':', N'$'); 
+
 
 use msdb
 
@@ -327,7 +334,21 @@ WHILE EXISTS(SELECT TOP 1 * FROM @databases WHERE database_name > @databaseName 
    PRINT N'    RETURN;';
    PRINT N'END CATCH';
    PRINT N'';
-   
+   PRINT N'GO';
+   PRINT N'';
+   PRINT N'-- Create full database backup for secondary instance databases to restore from';
+   PRINT N'';
+   PRINT N'PRINT N''Creating full database backup for ' + quotename(@databaseName) + N''';';
+   PRINT N'PRINT N'''';';
+   PRINT N'';
+   PRINT N'BACKUP DATABASE ' + @databaseName
+   PRINT N'TO DISK = N''' + @backup_directory + N'\' + @databaseName + N'_InitLSBackup.bak''';
+   PRINT N'WITH FORMAT,';
+   PRINT N'      MEDIANAME = N''' + @databaseName + N'_InitLSBackup'',';
+   PRINT N'      NAME = N''' + @databaseName + N' Initial LS Backup'';';
+   PRINT N'';
+   PRINT N'PRINT N'''';';
+
    raiserror('',0,1) WITH NOWAIT; --flush print buffer
 
 END
@@ -347,3 +368,5 @@ PRINT N'';
 PRINT N'DROP TABLE #elapsedTime';
 
 --End of script, proceed to Primary Monitor Logshipping
+
+select * from msdb.dbo.log_shipping_primary_databases;

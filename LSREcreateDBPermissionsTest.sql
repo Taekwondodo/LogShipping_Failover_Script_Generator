@@ -1,3 +1,5 @@
+   use [master];
+   
    declare @cmd nvarchar(max);
    set @cmd = 'set nocount on;
 
@@ -1061,43 +1063,10 @@
    print N''end else begin'';
    print N''   print N''''Principal recreation failed!'''';''; 
    print N''end;'';
-   print N'''';
-   ';
+   print N'''';';
 
 
-   declare @counter int
-          ,@length int
-          ,@buffer int
-          ,@current int
-          ,@next int;
-
-   set @length = LEN(@cmd);
-   set @counter = 0;
-   set @buffer = 2000;
-   set @next = 0;
-
-   while (@counter < (@length / @buffer))begin
-
-      set @current = @next + @current;
-      set @next = 0;
-      
-      while (ASCII(substring(@cmd, @current + @buffer - @next, 1)) <> 10)begin
-
-         set @next = @next + 1;
-
-      end;
-
-      set @next = @buffer - @next;
-
-      print N'NEXT: ' + cast(@next as nvarchar(20));
-
-      print substring(@cmd, @counter, @next);
-
-      raiserror(N'',0,1) WITH NOWAIT;
-
-      set @counter = @counter + 1;
-      
-   end;
+EXEC dbo.PrintLongCMD @cmd = @cmd;
 
   
    

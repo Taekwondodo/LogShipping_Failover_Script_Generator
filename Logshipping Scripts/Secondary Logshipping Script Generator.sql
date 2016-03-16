@@ -104,18 +104,21 @@ The rest will require input on your part and will be tagged with a #INSERT
 Since this script is being ran on the primary server, we can't find the backup location for the logs through the registry. This will instead be done within the output script.
 */
 
-DECLARE   @secondaryServer          SYSNAME
-         ,@copy_job_name            SYSNAME
-         ,@restore_job_name         SYSNAME
-         ,@copy_schedule_name       NVARCHAR(128)
-         ,@restore_schedule_name    NVARCHAR(128)
-         ,@overwrite                BIT 
-         ,@ignoreremotemonitor      BIT 
-         ,@enabled                  TINYINT
-         ,@restore_delay            INT
-         ,@restore_all              BIT
-         ,@restore_mode             BIT
-         ,@disconnect_users         BIT;
+DECLARE   @secondaryServer             SYSNAME
+         ,@copy_job_name               SYSNAME
+         ,@restore_job_name            SYSNAME
+         ,@copy_schedule_name          NVARCHAR(128)
+         ,@restore_schedule_name       NVARCHAR(128)
+         ,@backupDestinationDirectory  NVARCHAR(500)
+         ,@standbyDestinationDirectory NVARCHAR(500)
+         ,@overwrite                   BIT 
+         ,@ignoreremotemonitor         BIT 
+         ,@enabled                     TINYINT
+         ,@restore_delay               INT
+         ,@restore_all                 BIT
+         ,@restore_mode                BIT
+         ,@disconnect_users            BIT
+         ;
          
 --
 -- Set Defaults 
@@ -136,7 +139,8 @@ SET @restore_delay = 0;          -- The amount of time, in minutes, that the sec
 SET @restore_all = 1;            -- 1 = Restore all available transaction logs for a database when restoring. 0 = Restore 1 log for a database then quit.
 SET @restore_mode = 0;           -- 0 = NORECOVERY, 1 = STANDBY
 SET @disconnect_users = 0;       -- Whether or not to disconnect users from the secondary DB during a restore operation. 0 = yes, 1 = no
-
+SET @backupDestinationDirectory = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups\Secondary (Copy Job)'; -- Where the copy job will store the log backups from the primary instance
+SET @standbyDestinationDirectory = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups\Standby Files\PerformanceTest.ldf'; -- Location of database standby files
 --
 -- End of default values setup
 --
@@ -263,6 +267,23 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
 
    PRINT N'GO';
    PRINT N'';
+   PRINT N'BEGIN TRY';
+   PRINT N'';
+   PRINT N'    --Create the secondary instance databases';
+   PRINT N'';
+   PRINT N'    RESTORE DATABASE [' + @databaseName + N'] FROM DISK = N''' + @backupSourceDirectory + N'\' + @databaseName + N'_InitLSBackup.bak''';
+   PRINT N'    WITH REPLACE, STANDBY = N''' + @standbySourceDirectory + N'\' + @databaseName + N'.ldf''';
+
+
+
+
+
+   PRINT N'END TRY';
+   PRINT N'BEGIN CATCH';
+   PRINT N'END CATCH;';
+   PRINT N'';
+   PRINT N'GO';
+   PRINT N'';
    PRINT N'PRINT N'''';';
    PRINT N'';
    PRINT N'--********Secondary Logshipping for ' + quotename(@databaseName) + N'********--';
@@ -279,14 +300,14 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'	DECLARE @LS_Add_RetCode	As int ';
    PRINT N'    DECLARE @backupDestinationFilePath AS NVARCHAR(500)';
    PRINT N'';
-   PRINT N'    SELECT TOP 1 @backupDestinationFilePath = file_path FROM #elapsedTimeAndFilePath;';
+   --PRINT N'    SELECT TOP 1 @backupDestinationFilePath = file_path FROM #elapsedTimeAndFilePath;';
    PRINT N'';
    PRINT N'';
    PRINT N'	EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary ';
    PRINT N'			 @primary_server = N''' + @@SERVERNAME + N'''';
    PRINT N'			,@primary_database = N''' + @databaseName + N'''';
-   PRINT N'			,@backup_source_directory = @backupDestinationFilePath';
-   PRINT N'			,@backup_destination_directory = @backupDestinationFilePath';
+   PRINT N'			,@backup_source_directory = N''' + @backupSourceDirectory + N'''';
+   PRINT N'			,@backup_destination_directory = N''' + @backupDestinationDirectory + N'''';
    PRINT N'			,@copy_job_name = N''' + @copy_job_name + @databaseName + N''''; 
    PRINT N'			,@restore_job_name = N''' + @restore_job_name + @databaseName + N'''';
    PRINT N'			,@file_retention_period = ' + @fileRetentionPeriod;

@@ -881,7 +881,7 @@ WHILE EXISTS(SELECT * FROM @databases AS d WHERE d.database_name > @databaseName
    PRINT N'';
    PRINT N'	            --Bring the database online. If the restore fails quit execution with error';
    PRINT N'';
-   --PRINT N'                RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
+   PRINT N'                RESTORE DATABASE ' + quotename(@databaseName) + N' WITH RECOVERY;'
    PRINT N'';
    PRINT N'	        END TRY';
    PRINT N'	        BEGIN CATCH';

@@ -5,8 +5,7 @@ This script is ran on the primary server of your logshipping configuration after
 Use this script to produce a T-SQL script to recreate databases and their respective permissions on the secondary instance of your logshipping configuration
 
 */
-
-   
+ 
 --
 -- Start of recreate databases script
 --
@@ -191,9 +190,12 @@ order by name;
 
 -- Print database creation header information
 
+declare @secondaryServer sysname;
+select top 1 @secondaryServer = secondary_server from msdb.dbo.log_shipping_primary_secondaries;
+
 print N'/*';
-print N' * *****RUN ON ' + quotename(@@SERVERNAME) + N'*****';
-print N' * Use the following script to produce a T-SQL script to recreate primary instance database on the secondary instance of a logshipping configuration';
+print N' * *****RUN ON ' + quotename(@secondaryServer) + N'*****';
+print N' * Use the following script to produce a T-SQL script to recreate primary instance databases on the secondary instance of a logshipping configuration';
 print N' *';
 print N' * Generated ' + convert(varchar, getdate()) + N' by ' + suser_sname();
 print N' *';
@@ -316,13 +318,16 @@ order by case when ds.name = N''PRIMARY'' then 1 else 2 end
    print N'--';
    print N'--============================================================';
    print N'--';
+   print N'';
    print N'print N''--============================================================'';';
    print N'print N''Begin Database: ' + quotename(@dbName) + N''';';
    print N'go';
    print N'';
 
    print N'print N''creating database ' + quotename(@dbName) + N'...'';';
+   print N'';
    print N'go';
+   print N'';
    print N'create database ' + quotename(@dbName) + N' on';
    
    set @rowID = 0;
@@ -470,24 +475,18 @@ order by case when ds.name = N''PRIMARY'' then 1 else 2 end
   
    end; 
 
-   raiserror(N'',0,1) WITH NOWAIT; --flush print buffer
-
-      print N'print N''End Database: ' + quotename(@dbName) + N''';';
+   print N'print N''End Database: ' + quotename(@dbName) + N'. Beginning Principal Creation...'';';
+   print N'';
    print N'go';
    print N'';
 
    raiserror(N'',0,1) WITH NOWAIT; -- flush print buffer;
 
-end;
+   --
+   -- End of recreate database script
+   --================================================================
+   --
 
-select   *
-from     @dbFiles
-order by database_name 
-       , rowID;
---
--- End of recreate database script
---================================================================
---
 
    --
    -- Begin recreating database permissions
@@ -496,21 +495,21 @@ order by database_name
 
    /*
 
-   Use this script to produce a T-SQL script to recreate database principals from the current instance matching filters, 
+   This portion of the script produces a T-SQL script to recreate database principals from the current instance matching filters, 
    optionally also recreating the corresponding server principal and rights.
 
    Specify the database context in the use statement below to inspect the desired database.
 
    */
 
-   declare @useCmd nvarchar(256);
+   --We use dynamic SQL here as it is necessary to change database context for each database we iterate through
+
+   declare @useCmd nvarchar(MAX);
    set @useCmd = N'use ' + @dbName + N';';
 
-   exec ( @useCmd );
-   
-   
-   set nocount on;
+   set @useCmd = @useCMD + '
 
+   set nocount on;
    declare @debug bit;
    declare @principal_name nvarchar(128);
    declare @include_role_members bit;
@@ -527,45 +526,45 @@ order by database_name
    set @include_system_objects = 0;
    set @recreate_logins = 1;
 
-   --set @principal_name = N'';
+   --set @principal_name = N'''';
 
-   --set @principal_name = N'tsgUser';
+   --set @principal_name = N''tsgUser'';
 
-   --set @principal_name = N'CBCSyncUser';
-   --set @principal_name = N'GCF Applications';
-   --SET @principal_name = N'Budget Users';
-   --set @principal_name = N'SQLMonitorUser';
-   --set @principal_name = N'MergeImportUser';
-   --set @principal_name = N'PBRC\StewarAE';
-   --set @principal_name = N'StudyManagerUser';
-   --set @principal_name = N'Email Creators';
-   --set @principal_name = N'CBCSyncUsers';
-   --set @principal_name = N'ChamberUser';
-   --set @principal_name = N'Email Readers - BRC';
-   --set @principal_name = N'PINE Application';
-   --set @principal_name = N'LinkedServerBrowsers';
-   --set @principal_name = N'LACaTSUser';
-   --set @principal_name = N'email readers';
-   --set @principal_name = N'Log Readers';
-   --set @principal_name = N'WebApplication';
-   --set @principal_name = N'pbrc\turnerdg';
-   --set @principal_name = N'pbrc\davenpfg'
-   --set @principal_name = N'pbrc\RuthJG';
-   --set @principal_name = N'pbrc\nguyenvl';
-   --set @principal_name = N'pbrc\kellyjl';
-   --set @principal_name = N'pbrc\mossvl'
-   --set @principal_name = N'pbrc\nguyenth';
-   --set @principal_name = N'LinkUser'
-   --set @principal_name = N'acg developers'
-   --set @principal_name = N'PublicWeb Users' ;
-   --set @principal_name = N'PublicApplicationUsers' ;
-   --set @principal_name = N'PublicApplicationOperators' ;
+   --set @principal_name = N''CBCSyncUser'';
+   --set @principal_name = N''GCF Applications'';
+   --SET @principal_name = N''Budget Users'';
+   --set @principal_name = N''SQLMonitorUser'';
+   --set @principal_name = N''MergeImportUser'';
+   --set @principal_name = N''PBRC\StewarAE'';
+   --set @principal_name = N''StudyManagerUser'';
+   --set @principal_name = N''Email Creators'';
+   --set @principal_name = N''CBCSyncUsers'';
+   --set @principal_name = N''ChamberUser'';
+   --set @principal_name = N''Email Readers - BRC'';
+   --set @principal_name = N''PINE Application'';
+   --set @principal_name = N''LinkedServerBrowsers'';
+   --set @principal_name = N''LACaTSUser'';
+   --set @principal_name = N''email readers'';
+   --set @principal_name = N''Log Readers'';
+   --set @principal_name = N''WebApplication'';
+   --set @principal_name = N''pbrc\turnerdg'';
+   --set @principal_name = N''pbrc\davenpfg''
+   --set @principal_name = N''pbrc\RuthJG'';
+   --set @principal_name = N''pbrc\nguyenvl'';
+   --set @principal_name = N''pbrc\kellyjl'';
+   --set @principal_name = N''pbrc\mossvl''
+   --set @principal_name = N''pbrc\nguyenth'';
+   --set @principal_name = N''LinkUser''
+   --set @principal_name = N''acg developers''
+   --set @principal_name = N''PublicWeb Users'' ;
+   --set @principal_name = N''PublicApplicationUsers'' ;
+   --set @principal_name = N''PublicApplicationOperators'' ;
    
    -- =============================================
 
    set @debug = coalesce(@debug, 0);
 
-   set @principal_name = nullif(@principal_name, N'');
+   set @principal_name = nullif(@principal_name, N'''');
 
    if (@principal_name is not null) 
       set @principal_name = coalesce((select name
@@ -579,28 +578,28 @@ order by database_name
 
    set @recreate_logins = coalesce(@recreate_logins, 0);
 	
-   if (object_id('tempdb..#target_principals') is not null)
+   if (object_id(''tempdb..#target_principals'') is not null)
       drop table #target_principals;	
 
-   if (object_id('tempdb..#server_principals') is not null)
+   if (object_id(''tempdb..#server_principals'') is not null)
       drop table #server_principals;
 
-   if (object_id('tempdb..#server_permissions') is not null)
+   if (object_id(''tempdb..#server_permissions'') is not null)
       drop table #server_permissions;
 
-   if (object_id('tempdb..#server_memberships') is not null)
+   if (object_id(''tempdb..#server_memberships'') is not null)
       drop table #server_memberships;
 	
-   if (object_id('tempdb..#database_principals') is not null)
+   if (object_id(''tempdb..#database_principals'') is not null)
       drop table #database_principals;	
 
-   if (object_id('tempdb..#database_permissions') is not null)
+   if (object_id(''tempdb..#database_permissions'') is not null)
 	   drop table #database_permissions;
 
-   if (object_id('tempdb..#database_roles') is not null)
+   if (object_id(''tempdb..#database_roles'') is not null)
       drop table #database_roles;
 
-   if (object_id('tempdb..#database_memberships') is not null)
+   if (object_id(''tempdb..#database_memberships'') is not null)
 	   drop table #database_memberships;
 
    create table #target_principals (
@@ -700,8 +699,8 @@ order by database_name
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'getting target principals...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''getting target principals...'', 0, 1) with nowait;
 
    end;
 
@@ -712,12 +711,12 @@ order by database_name
          (principal_id)
       select   dp.principal_id
       from     sys.database_principals as dp
-      where    (dp.[sid] <> 0x01) -- don't want sa/dbo;
+      where    (dp.[sid] <> 0x01) -- don''t want sa/dbo;
 
    end else begin
 
       with all_principals as (
-         -- anchor with the specified principal's explicit roles
+         -- anchor with the specified principal''s explicit roles
          select   drm.member_principal_id
                 , drm.role_principal_id
          from     sys.database_role_members as drm
@@ -734,7 +733,7 @@ order by database_name
       insert into #target_principals (
          principal_id
       )
-      -- include the specified principal explicitly, in case they aren't a member of any roles
+      -- include the specified principal explicitly, in case they aren''t a member of any roles
       select   principal_id
       from     sys.database_principals as dp
       where    (dp.[name] = coalesce(@principal_name, dp.[name]))
@@ -773,14 +772,14 @@ order by database_name
       from     all_members
                inner join sys.database_principals as dp on all_members.member_principal_id = dp.principal_id
       where    (dp.principal_id not in (select principal_id from #target_principals))
-               and (dp.[sid] <> 0x01) -- don't want sa/dbo;
+               and (dp.[sid] <> 0x01) -- don''t want sa/dbo;
    
    end
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'showing target principals...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''showing target principals...'', 0, 1) with nowait;
 
       select   sp.*
       from     #target_principals as p2
@@ -789,13 +788,13 @@ order by database_name
       where    (dp.[sid] is not null)  
                and (dp.is_fixed_role = 0)
       order by case sp.[type]
-                 when 'S' then 1 -- sql user
-                 when 'U' then 2 -- windows user
-                 when 'G' then 3 -- windows group
-                 when 'A' then 4 -- application role
-                 when 'R' then 5 -- database role
-                 when 'C' then 6 -- user mapped to a certificate
-                 when 'K' then 7 -- user mapped to an asymmetric key                                
+                 when ''S'' then 1 -- sql user
+                 when ''U'' then 2 -- windows user
+                 when ''G'' then 3 -- windows group
+                 when ''A'' then 4 -- application role
+                 when ''R'' then 5 -- database role
+                 when ''C'' then 6 -- user mapped to a certificate
+                 when ''K'' then 7 -- user mapped to an asymmetric key                                
                end
              , sp.name;
 
@@ -805,14 +804,14 @@ order by database_name
 
       if (@debug = 1) begin
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'getting server principals...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''getting server principals...'', 0, 1) with nowait;
 
       end;
 
       declare @x xml;
 
-      set @x = N'<root></root>';
+      set @x = N''<root></root>'';
 
       insert into #server_principals (
          cmd
@@ -824,30 +823,30 @@ order by database_name
        , principal_type_sort_order
       )
       select   replace(replace(replace(
-                  N'if not exists (select * from sys.server_principals where [name] = N''{server_principal_name}'')|   create login {quoted_server_principal_name}{specification};|'
-                , N'{server_principal_name}', sp.[name])
-                , N'{quoted_server_principal_name}', quotename(sp.[name]))
-                , N'{specification}', case sp.[type] 
-                                       when 'S' 
+                  N''if not exists (select * from sys.server_principals where [name] = N''''{server_principal_name}'''')|   create login {quoted_server_principal_name}{specification};|''
+                , N''{server_principal_name}'', sp.[name])
+                , N''{quoted_server_principal_name}'', quotename(sp.[name]))
+                , N''{specification}'', case sp.[type] 
+                                       when ''S'' 
                                           then replace(replace(replace(replace(replace(replace(
-                                                  N' with password={password}{hashed}, check_expiration={check_expiration}, check_policy={check_policy}, sid={sid}, default_database={quoted_default_database_name}'
-                                                , N'{quoted_default_database_name}', quotename(sp.default_database_name))
-                                                , N'{sid}', ct.sid_ct)
-                                                , N'{check_policy}', case sl.is_policy_checked when 1 then N'on' else N'off' end)
-                                                , N'{check_expiration}', case is_expiration_checked when 1 then N'on' else N'off' end)
-                                                , N'{hashed}', case when ct.password_ct is null then N'' else N' hashed' end)
-                                                , N'{password}', case when ct.password_ct is null then N'' else password_ct end
+                                                  N'' with password={password}{hashed}, check_expiration={check_expiration}, check_policy={check_policy}, sid={sid}, default_database={quoted_default_database_name}''
+                                                , N''{quoted_default_database_name}'', quotename(sp.default_database_name))
+                                                , N''{sid}'', ct.sid_ct)
+                                                , N''{check_policy}'', case sl.is_policy_checked when 1 then N''on'' else N''off'' end)
+                                                , N''{check_expiration}'', case is_expiration_checked when 1 then N''on'' else N''off'' end)
+                                                , N''{hashed}'', case when ct.password_ct is null then N'''' else N'' hashed'' end)
+                                                , N''{password}'', case when ct.password_ct is null then N'''' else password_ct end
                                                )
                                        else replace(
-                                               N' from windows with default_database={quoted_default_database_name}'
-                                             , N'{quoted_default_database_name}', quotename(sp.default_database_name)
+                                               N'' from windows with default_database={quoted_default_database_name}''
+                                             , N''{quoted_default_database_name}'', quotename(sp.default_database_name)
                                             )
                                     end
                ) as cmd
              , sp.[sid]
              , sp.[name]
              , sl.password_hash              
-             , case sl.[type] when 'S' then 0 else 1 end as isntname
+             , case sl.[type] when ''S'' then 0 else 1 end as isntname
              , sp.default_database_name
              , ptso.principal_type_sort_order
       from     #target_principals as p 
@@ -860,31 +859,31 @@ order by database_name
                --            ) as ct
                outer apply (
                   select
-                     N'0x' + @x.value(N'xs:hexBinary(sql:column("sl.password_hash"))', N'[nvarchar](512)') as password_ct
-                   , N'0x' + @x.value(N'xs:hexBinary(sql:column("sp.[sid]"))', N'[nvarchar](512)')         as sid_ct      
+                     N''0x'' + @x.value(N''xs:hexBinary(sql:column("sl.password_hash"))'', N''[nvarchar](512)'') as password_ct
+                   , N''0x'' + @x.value(N''xs:hexBinary(sql:column("sp.[sid]"))'', N''[nvarchar](512)'')         as sid_ct      
                ) as ct
                outer apply (
                            select case sp.[type]
-                                   when 'S' then 1 -- sql user
-                                   when 'U' then 2 -- windows user
+                                   when ''S'' then 1 -- sql user
+                                   when ''U'' then 2 -- windows user
                                  end as principal_type_sort_order) as ptso
-      where    (sp.[type] in ('S', 'U'))
+      where    (sp.[type] in (''S'', ''U''))
                and (sp.is_disabled = 0)
-               and (sp.[sid] <> 0x01) -- don't want sa/dbo
+               and (sp.[sid] <> 0x01) -- don''t want sa/dbo
       order by ptso.principal_type_sort_order
              , sp.[name];
 
       if (@debug = 1) begin
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'showing server principals...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''showing server principals...'', 0, 1) with nowait;
 
          select   *
          from     #server_principals as l
          order by RowID ;
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'getting server role memberships...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''getting server role memberships...'', 0, 1) with nowait;
 
       end;
 
@@ -898,15 +897,15 @@ order by database_name
        , [sid]
       )
       select   replace(replace(replace(replace(
-                  N'if exists(select * from sys.server_principals where name = N''{member_principal_name}'')|    ' + 
+                  N''if exists(select * from sys.server_principals where name = N''''{member_principal_name}'''')|    '' + 
                   case when @compatibility_level_prncpl < 110 
-                     then N'exec dbo.sp_addsrvrolemember @loginame = N''{member_principal_name}'', @rolename = N''{role_name}'';'
-                     else N'alter server role {quoted_role_name} add member {quoted_member_principal_name};'
+                     then N''exec dbo.sp_addsrvrolemember @loginame = N''''{member_principal_name}'''', @rolename = N''''{role_name}'''';''
+                     else N''alter server role {quoted_role_name} add member {quoted_member_principal_name};''
                   end
-                , N'{role_name}', r.[name])
-                , N'{quoted_role_name}', quotename(r.[name]))
-                , N'{member_principal_name}', t1.member_principal_name)
-                , N'{quoted_member_principal_name}', quotename(t1.member_principal_name)
+                , N''{role_name}'', r.[name])
+                , N''{quoted_role_name}'', quotename(r.[name]))
+                , N''{member_principal_name}'', t1.member_principal_name)
+                , N''{quoted_member_principal_name}'', quotename(t1.member_principal_name)
                ) as cmd
              , t1.member_principal_name
              , p.[name] as server_principal_name
@@ -927,30 +926,30 @@ order by database_name
                inner join [master].sys.server_principals as r on m.role_principal_id = r.principal_id
                outer apply (
                            select case p.[type]
-                                   when 'S' then 1 -- sql user
-                                   when 'U' then 2 -- windows user
-                                   when 'G' then 3 -- windows group
-                                   when 'A' then 4 -- application role
-                                   when 'R' then 5 -- database role
-                                   when 'C' then 6 -- user mapped to a certificate
-                                   when 'K' then 7 -- user mapped to an asymmetric key                                
+                                   when ''S'' then 1 -- sql user
+                                   when ''U'' then 2 -- windows user
+                                   when ''G'' then 3 -- windows group
+                                   when ''A'' then 4 -- application role
+                                   when ''R'' then 5 -- database role
+                                   when ''C'' then 6 -- user mapped to a certificate
+                                   when ''K'' then 7 -- user mapped to an asymmetric key                                
                                  end as principal_type_sort_order) as ptso
-      where    (t1.[sid] <> 0x01) -- don't want sa/dbo
+      where    (t1.[sid] <> 0x01) -- don''t want sa/dbo
       order by principal_type_sort_order
              , member_principal_name
              , r.[sid];
 
       if (@debug = 1) begin
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'showing server role memberships...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''showing server role memberships...'', 0, 1) with nowait;
 
          select   *
          from     #server_memberships as sr
          order by RowID ;
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'getting server permissions...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''getting server permissions...'', 0, 1) with nowait;
 
       end;
 
@@ -972,11 +971,11 @@ order by database_name
        , grantor_name
       )
       select   replace(replace(replace(replace(
-                  N'{perms_state_desc} {permission_name} to {quoted_principal_name}{grant_option};'
-                , N'{perms_state_desc}', case when perms.[state] = N'W' then N'grant' else lower(perms.state_desc collate database_default) end)
-                , N'{permission_name}', lower(perms.[permission_name] collate database_default))
-                , N'{quoted_principal_name}', quotename(principals.name))
-                , N'{grant_option}', case when perms.[state] = 'W' then N' with grant option' else N'' end
+                  N''{perms_state_desc} {permission_name} to {quoted_principal_name}{grant_option};''
+                , N''{perms_state_desc}'', case when perms.[state] = N''W'' then N''grant'' else lower(perms.state_desc collate database_default) end)
+                , N''{permission_name}'', lower(perms.[permission_name] collate database_default))
+                , N''{quoted_principal_name}'', quotename(principals.name))
+                , N''{grant_option}'', case when perms.[state] = ''W'' then N'' with grant option'' else N'''' end
                ) as cmd
              , @@SERVERNAME as [object_name]
              , pts.principal_type_sort
@@ -1002,32 +1001,32 @@ order by database_name
                                     and (is_fixed_role = 0)
                           ) as t1 on principals.[sid] = t1.[sid]
                outer apply (select  case principals.[type]
-                                      when 'S' then 1 -- sql user
-                                      when 'U' then 2 -- windows user
-                                      when 'G' then 3 -- windows group
-                                      when 'A' then 4 -- application role
-                                      when 'R' then 5 -- database role
-                                      when 'C' then 6 -- user mapped to a certificate
-                                      when 'K' then 7 -- user mapped to an asymmetric key
+                                      when ''S'' then 1 -- sql user
+                                      when ''U'' then 2 -- windows user
+                                      when ''G'' then 3 -- windows group
+                                      when ''A'' then 4 -- application role
+                                      when ''R'' then 5 -- database role
+                                      when ''C'' then 6 -- user mapped to a certificate
+                                      when ''K'' then 7 -- user mapped to an asymmetric key
                                     end as principal_type_sort
                            ) as pts
                inner join [master].sys.server_principals as grantors on perms.grantor_principal_id = grantors.principal_id
-      where    (not ( (perms.class = 100) and (perms.[type] = N'COSQ' ) ) ) -- don't want server connect perms: covered by adding logins to server
+      where    (not ( (perms.class = 100) and (perms.[type] = N''COSQ'' ) ) ) -- don''t want server connect perms: covered by adding logins to server
       order by pts.principal_type_sort
              , principals.name
              , principals.[sid];
 
       if (@debug = 1) begin
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'showing server permissions...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''showing server permissions...'', 0, 1) with nowait;
 
          select   *
          from     #server_permissions
          order by RowID;
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'getting database principals...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''getting database principals...'', 0, 1) with nowait;
 
       end;
 
@@ -1039,11 +1038,11 @@ order by database_name
        , default_schema_name
       )
       select   replace(replace(replace(replace(
-                  N'if not exists (select * from sys.database_principals where name = N''{database_principal_name}'' and type in (''S'', ''U''))|   create user {quoted_database_principal_name} for login {quoted_server_principal_name} with default_schema={quoted_default_schema_name};'
-                , N'{database_principal_name}', dp.name)
-                , N'{quoted_database_principal_name}', quotename(dp.name))
-                , N'{quoted_server_principal_name}', quotename(sp.name))
-                , N'{quoted_default_schema_name}', quotename(dp.default_schema_name)
+                  N''if not exists (select * from sys.database_principals where name = N''''{database_principal_name}'''' and type in (''''S'''', ''''U''''))|   create user {quoted_database_principal_name} for login {quoted_server_principal_name} with default_schema={quoted_default_schema_name};''
+                , N''{database_principal_name}'', dp.name)
+                , N''{quoted_database_principal_name}'', quotename(dp.name))
+                , N''{quoted_server_principal_name}'', quotename(sp.name))
+                , N''{quoted_default_schema_name}'', quotename(dp.default_schema_name)
                ) as cmd
              , dp.[name] as [user_name]
              , dp.principal_id
@@ -1052,23 +1051,23 @@ order by database_name
       from     #target_principals as p
                inner join sys.database_principals as dp on p.principal_id = dp.principal_id
                left outer join sys.server_principals as sp on dp.[sid] = sp.[sid]
-      where    (dp.[type] in ('S', 'U'))
+      where    (dp.[type] in (''S'', ''U''))
                and (sp.[name] is not null)
       order by case dp.[type]
-                 when 'S' then 1 -- sql user
-                 when 'U' then 2 -- windows user
-                 when 'G' then 3 -- windows group
-                 when 'A' then 4 -- application role
-                 when 'R' then 5 -- database role
-                 when 'C' then 6 -- user mapped to a certificate
-                 when 'K' then 7 -- user mapped to an asymmetric key
+                 when ''S'' then 1 -- sql user
+                 when ''U'' then 2 -- windows user
+                 when ''G'' then 3 -- windows group
+                 when ''A'' then 4 -- application role
+                 when ''R'' then 5 -- database role
+                 when ''C'' then 6 -- user mapped to a certificate
+                 when ''K'' then 7 -- user mapped to an asymmetric key
                end
              , dp.[name];
 
       if (@debug = 1) begin
 
-         raiserror (N'', 0, 1) with nowait;
-         raiserror (N'showing database principals...', 0, 1) with nowait;
+         raiserror (N'''', 0, 1) with nowait;
+         raiserror (N''showing database principals...'', 0, 1) with nowait;
 
          select   *
          from     #database_principals
@@ -1080,8 +1079,8 @@ order by database_name
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'getting database roles...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''getting database roles...'', 0, 1) with nowait;
 
    end;
 
@@ -1092,10 +1091,10 @@ order by database_name
     , owner_name
    )
    select   replace(replace(replace(
-               N'if not exists (select * from sys.database_principals where name = N''{database_principal_name}'' and type in (''A'', ''R''))|   create role {quoted_database_principal_name} authorization {quoted_owner_name};'
-             , N'{quoted_owner_name}', quotename(opn.owner_name))
-             , N'{quoted_database_principal_name}', quotename(dp.[name]))
-             , N'{database_principal_name}', dp.[name]
+               N''if not exists (select * from sys.database_principals where name = N''''{database_principal_name}'''' and type in (''''A'''', ''''R''''))|   create role {quoted_database_principal_name} authorization {quoted_owner_name};''
+             , N''{quoted_owner_name}'', quotename(opn.owner_name))
+             , N''{quoted_database_principal_name}'', quotename(dp.[name]))
+             , N''{database_principal_name}'', dp.[name]
             ) as cmd
           , dp.[name] as role_name
           , dp.principal_id
@@ -1107,23 +1106,23 @@ order by database_name
                         from     sys.database_principals as dp2
                         where    (dp2.principal_id = dp.owning_principal_id)
                         ) as opn
-   where    (dp.[type] in ('A', 'R'))
+   where    (dp.[type] in (''A'', ''R''))
             and (dp.is_fixed_role = 0)
    order by case dp.[type]
-              when 'S' then 1 -- sql user
-              when 'U' then 2 -- windows user
-              when 'G' then 3 -- windows group
-              when 'A' then 4 -- application role
-              when 'R' then 5 -- database role
-              when 'C' then 6 -- user mapped to a certificate
-              when 'K' then 7 -- user mapped to an asymmetric key
+              when ''S'' then 1 -- sql user
+              when ''U'' then 2 -- windows user
+              when ''G'' then 3 -- windows group
+              when ''A'' then 4 -- application role
+              when ''R'' then 5 -- database role
+              when ''C'' then 6 -- user mapped to a certificate
+              when ''K'' then 7 -- user mapped to an asymmetric key
             end
           , dp.[name];
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'showing database roles...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''showing database roles...'', 0, 1) with nowait;
 
       select   *
       from     #database_roles
@@ -1133,8 +1132,8 @@ order by database_name
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'getting database role memberships...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''getting database role memberships...'', 0, 1) with nowait;
 
    end;
 
@@ -1149,18 +1148,18 @@ order by database_name
    )
    select   replace(replace(replace(replace(
                case when @recreate_logins = 0 
-                  then N'if exists(select * from sys.database_principals where name = ''{database_principal_name}'')|   ' 
-                  else N'' 
+                  then N''if exists(select * from sys.database_principals where name = ''''{database_principal_name}'''')|   '' 
+                  else N'''' 
                end 
              + case when @compatibility_level_prncpl < 110
-                  then N'exec sp_addrolemember N''{role_name}'', N''{database_principal_name}'''
-                  else N'alter role {quoted_role_name} add member {quoted_database_principal_name}'
+                  then N''exec sp_addrolemember N''''{role_name}'''', N''''{database_principal_name}''''''
+                  else N''alter role {quoted_role_name} add member {quoted_database_principal_name}''
                end 
-             + N';'
-             , N'{database_principal_name}', m.name)
-             , N'{role_name}', r.name)
-             , N'{quoted_database_principal_name}', quotename(m.name))
-             , N'{quoted_role_name}', quotename(r.name)
+             + N'';''
+             , N''{database_principal_name}'', m.name)
+             , N''{role_name}'', r.name)
+             , N''{quoted_database_principal_name}'', quotename(m.name))
+             , N''{quoted_role_name}'', quotename(r.name)
             ) as cmd
           , m.principal_id as member_principal_id
 		    , mts.member_type_sort
@@ -1175,13 +1174,13 @@ order by database_name
             inner join #target_principals as p2 on r.principal_id = p2.principal_id
             outer apply (
                         select   case m.type
-			                          when 'S' then 1 -- sql user
-			                          when 'U' then 2 -- windows user
-			                          when 'G' then 3 -- windows group
-			                          when 'A' then 4 -- application role
-			                          when 'R' then 5 -- database role
-			                          when 'C' then 6 -- user mapped to a certificate
-			                          when 'K' then 7 -- user mapped to an asymmetric key
+			                          when ''S'' then 1 -- sql user
+			                          when ''U'' then 2 -- windows user
+			                          when ''G'' then 3 -- windows group
+			                          when ''A'' then 4 -- application role
+			                          when ''R'' then 5 -- database role
+			                          when ''C'' then 6 -- user mapped to a certificate
+			                          when ''K'' then 7 -- user mapped to an asymmetric key
 			                        end as member_type_sort
                         ) as mts
    where		(m.is_fixed_role = 0) 
@@ -1192,8 +1191,8 @@ order by database_name
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'showing database role memberships...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''showing database role memberships...'', 0, 1) with nowait;
 
       select   *
       from     #database_memberships as dm
@@ -1203,8 +1202,8 @@ order by database_name
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'getting database permissions...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''getting database permissions...'', 0, 1) with nowait;
 
    end;
 
@@ -1229,32 +1228,32 @@ order by database_name
    )
    select   replace(replace(replace(replace(replace(replace(replace(replace(
                case when @recreate_logins = 0 
-                  then N'if exists (select * from sys.database_principals where name = N''{principal_name}'')|   '
-                  else N''
+                  then N''if exists (select * from sys.database_principals where name = N''''{principal_name}'''')|   ''
+                  else N''''
                end 
-             + N'{perms_state_desc} {permission_name}{target_prefix}{object} to {quoted_principal_name}{grant_option} as {quoted_grantor_name};'
-             , N'{perms_state_desc}', case when perms.[state] = N'W' then N'grant' else lower(perms.state_desc collate database_default) end)
-             , N'{permission_name}', lower(perms.[permission_name] collate database_default))
-             , N'{target_prefix}', case perms.class when 0 then N'' else N' on ' end)
-             , N'{object}', replace(replace(replace(
+             + N''{perms_state_desc} {permission_name}{target_prefix}{object} to {quoted_principal_name}{grant_option} as {quoted_grantor_name};''
+             , N''{perms_state_desc}'', case when perms.[state] = N''W'' then N''grant'' else lower(perms.state_desc collate database_default) end)
+             , N''{permission_name}'', lower(perms.[permission_name] collate database_default))
+             , N''{target_prefix}'', case perms.class when 0 then N'''' else N'' on '' end)
+             , N''{object}'', replace(replace(replace(
                               case perms.class 
-                                 when 0 then N''
-                                 when 3 then N'SCHEMA::{quoted_schema_name}'
-                                 when 6 then N'TYPE::{quoted_schema_name}.{quoted_object_name}'
-                                 when 16 then N'CONTRACT::{quoted_object_name}'
-                                 when 24 then N'SYMMETRIC KEY::{quoted_object_name}'
-                                 when 25 then N'CERTIFICATE::{quoted_object_name}'
-                                 else N'{quoted_schema_name}.{quoted_object_name}' + case when labels.column_name is null then N'' else N' {quoted_column_name}' end
+                                 when 0 then N''''
+                                 when 3 then N''SCHEMA::{quoted_schema_name}''
+                                 when 6 then N''TYPE::{quoted_schema_name}.{quoted_object_name}''
+                                 when 16 then N''CONTRACT::{quoted_object_name}''
+                                 when 24 then N''SYMMETRIC KEY::{quoted_object_name}''
+                                 when 25 then N''CERTIFICATE::{quoted_object_name}''
+                                 else N''{quoted_schema_name}.{quoted_object_name}'' + case when labels.column_name is null then N'''' else N'' {quoted_column_name}'' end
                               end 
-                            , N'{quoted_schema_name}', coalesce(quotename(labels.[schema_name] collate database_default), N''))
-                            , N'{quoted_object_name}', coalesce(quotename(labels.[object_name] collate database_default), N''))
-                            , N'{quoted_column_name}', coalesce(quotename(labels.[column_name] collate database_default), N'')
+                            , N''{quoted_schema_name}'', coalesce(quotename(labels.[schema_name] collate database_default), N''''))
+                            , N''{quoted_object_name}'', coalesce(quotename(labels.[object_name] collate database_default), N''''))
+                            , N''{quoted_column_name}'', coalesce(quotename(labels.[column_name] collate database_default), N'''')
                               )
                            )
-             , N'{quoted_principal_name}', quotename(principals.name))
-             , N'{grant_option}', case when perms.[state] = 'W' then N' with grant option' else N'' end)
-             , N'{quoted_grantor_name}', quotename(grantors.name))
-             , N'{principal_name}', principals.name
+             , N''{quoted_principal_name}'', quotename(principals.name))
+             , N''{grant_option}'', case when perms.[state] = ''W'' then N'' with grant option'' else N'''' end)
+             , N''{quoted_grantor_name}'', quotename(grantors.name))
+             , N''{principal_name}'', principals.name
             ) as cmd
           , labels.[schema_name]
           , labels.[object_name]
@@ -1297,20 +1296,20 @@ order by database_name
                                     else null 
                                  end as column_name
                                , case principals.[type]
-			                           when 'S' then 1 -- sql user
-			                           when 'U' then 2 -- windows user
-			                           when 'G' then 3 -- windows group
-			                           when 'A' then 4 -- application role
-			                           when 'R' then 5 -- database role
-			                           when 'C' then 6 -- user mapped to a certificate
-			                           when 'K' then 7 -- user mapped to an asymmetric key
+			                           when ''S'' then 1 -- sql user
+			                           when ''U'' then 2 -- windows user
+			                           when ''G'' then 3 -- windows group
+			                           when ''A'' then 4 -- application role
+			                           when ''R'' then 5 -- database role
+			                           when ''C'' then 6 -- user mapped to a certificate
+			                           when ''K'' then 7 -- user mapped to an asymmetric key
 			                        end as principal_type_sort
                         ) as labels
-   where    ((coalesce(labels.[schema_name], '') <> 'sys') or (@include_system_objects = 1)) -- don't want system objects
-            and (coalesce(labels.[schema_name], '') <> 'INFORMATION_SCHEMA') -- don't want metadata objects
-            and (coalesce(labels.[object_name], '') not like 'dt_%') -- don't want diagram-related objects
-            and (coalesce(labels.[object_name], '') not like 'fn_%') -- don't want diagram-related objects
-            and (not ( (perms.class = 0) and (perms.[type] = N'CO  ' ) ) ) -- don't want database connect perms: covered by adding users to database
+   where    ((coalesce(labels.[schema_name], '''') <> ''sys'') or (@include_system_objects = 1)) -- don''t want system objects
+            and (coalesce(labels.[schema_name], '''') <> ''INFORMATION_SCHEMA'') -- don''t want metadata objects
+            and (coalesce(labels.[object_name], '''') not like ''dt_%'') -- don''t want diagram-related objects
+            and (coalesce(labels.[object_name], '''') not like ''fn_%'') -- don''t want diagram-related objects
+            and (not ( (perms.class = 0) and (perms.[type] = N''CO  '' ) ) ) -- don''t want database connect perms: covered by adding users to database
    order by labels.[schema_name] collate database_default
           , perms.class
           , labels.[object_name] collate database_default
@@ -1322,8 +1321,8 @@ order by database_name
 
    if (@debug = 1) begin
 
-      raiserror (N'', 0, 1) with nowait;
-      raiserror (N'showing database permissions...', 0, 1) with nowait;
+      raiserror (N'''', 0, 1) with nowait;
+      raiserror (N''showing database permissions...'', 0, 1) with nowait;
 
       select   *
       from     #database_permissions
@@ -1332,30 +1331,30 @@ order by database_name
    end;
    if (@debug = 1) begin
    
-      raiserror(N'', 0, 1) with nowait;
-      raiserror(N'generating script...', 0, 1) with nowait;
-      raiserror(N'', 0, 1) with nowait;
+      raiserror(N'''', 0, 1) with nowait;
+      raiserror(N''generating script...'', 0, 1) with nowait;
+      raiserror(N'''', 0, 1) with nowait;
 
    end;
 
-   print N'-- =============================================';
-   print N'-- The following recreates' + case when @principal_name is null then N' all' else N' the' end + N' principal' + case when @principal_name is null then N's' else N' ' + quotename(@principal_name) end + N' in the database ' + quotename(db_name()) + N' on ' + quotename(@@servername) + N'.'
-   print N'--';
-   print N'-- Notes:';
-   print N'--  Role members are' + case @include_role_members when 1 then N'' else N' not' end + N' included.';
-   print N'--  System objects are' + case @include_system_objects when 1 then N'' else N' not' end + N' included.';
-   print N'--  Logins and users are' + case @recreate_logins when 1 then N'' else N' not' end + N' being recreated.';
-   print N'-- =============================================';
-   print N'-- Version History:';
-   print N'-- 1.0:';
-   print N'--  initial production version';
-   print N'-- =============================================';
+   print N''-- ============================================='';
+   print N''-- The following recreates'' + case when @principal_name is null then N'' all'' else N'' the'' end + N'' principal'' + case when @principal_name is null then N''s'' else N'' '' + quotename(@principal_name) end + N'' in the database '' + quotename(db_name()) + N'' on '' + quotename(@@servername) + N''.''
+   print N''--'';
+   print N''-- Notes:'';
+   print N''--  Role members are'' + case @include_role_members when 1 then N'''' else N'' not'' end + N'' included.'';
+   print N''--  System objects are'' + case @include_system_objects when 1 then N'''' else N'' not'' end + N'' included.'';
+   print N''--  Logins and users are'' + case @recreate_logins when 1 then N'''' else N'' not'' end + N'' being recreated.'';
+   print N''-- ============================================='';
+   print N''-- Version History:'';
+   print N''-- 1.0:'';
+   print N''--  initial production version'';
+   print N''-- ============================================='';
 
    if (exists(select * from #server_principals) or exists(select * from #server_memberships)) begin
 
-      print N'use master;';
-      print N'go';
-      print N'';
+      print N''use master;'';
+      print N''go'';
+      print N'''';
 
    end;
 
@@ -1371,19 +1370,19 @@ order by database_name
 
    if (@maxID > 0) begin
 
-      print N'-- create logins';            
+      print N''-- create logins'';            
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #server_principals
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1398,19 +1397,19 @@ order by database_name
 
    if (@maxID > 0) begin
 
-      print N'-- add logins to server roles';
+      print N''-- add logins to server roles'';
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #server_memberships
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1426,19 +1425,19 @@ order by database_name
 
    if (@maxID > 0) begin
 
-      print N'-- granting server permissions';
+      print N''-- granting server permissions'';
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #server_permissions
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1448,34 +1447,34 @@ order by database_name
 
    end;
 
-   print N'set xact_abort, arithabort on;'
-   print N'go';
-   print N'';
-   print N'begin transaction;'
-   print N'go';
-   print N'';
-   print N'use ' + quotename(db_name()) + N';';
-   print N'go';
-   print N'';
+   print N''set xact_abort, arithabort on;''
+   print N''go'';
+   print N'''';
+   print N''begin transaction;''
+   print N''go'';
+   print N'''';
+   print N''use '' + quotename(db_name()) + N'';'';
+   print N''go'';
+   print N'''';
 
    select   @rowID_prncpl = min(RowID), @maxID = max(RowID)
    from     #database_principals;
 
    if (@maxID > 0) begin
 
-      print N'-- create users for logins';
+      print N''-- create users for logins'';
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #database_principals
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1490,19 +1489,19 @@ order by database_name
 
    if (@maxID > 0) begin
 
-      print N'-- create database roles';
+      print N''-- create database roles'';
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #database_roles
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1517,19 +1516,19 @@ order by database_name
 
    if (@maxID > 0) begin
 
-      print N'-- add users to database roles';
+      print N''-- add users to database roles'';
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #database_memberships
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1544,19 +1543,19 @@ order by database_name
 
    if (@maxID > 0) begin
 
-      print N'-- grant permissions';
+      print N''-- grant permissions'';
 
       while (@rowID_prncpl <= @maxID) begin
 
-         select   @cmd_prncpl = replace(cmd, N'|', @crlf_prncpl)
+         select   @cmd_prncpl = replace(cmd, N''|'', @crlf_prncpl)
          from     #database_permissions
          where    (RowID = @rowID_prncpl);
       
-         if (nullif(@cmd_prncpl, N'') is not null) begin
+         if (nullif(@cmd_prncpl, N'''') is not null) begin
          
             print @cmd_prncpl;  
-            print N'go';
-            print N'';
+            print N''go'';
+            print N'''';
 
          end;
 
@@ -1566,12 +1565,22 @@ order by database_name
 
    end;
 
-   print N'if (@@trancount > 0) begin';
-   print N'   commit transaction;';
-   print N'end else begin';
-   print N'   print N''Principal recreation failed!'';'; 
-   print N'end;';
-   print N'';
+   print N''if (@@trancount > 0) begin'';
+   print N''   commit transaction;'';
+   print N''end else begin'';
+   print N''   print N''''Principal recreation failed!'''';''; 
+   print N''end;'';
+   print N'''';';
+
+   exec ( @useCmd );
+
+   raiserror(N'',0,1) WITH NOWAIT;
+end;
+
+select   *
+from     @dbFiles
+order by database_name 
+       , rowID;
 
 PRINT N'';
 PRINT N'--Print elapsed time';
@@ -1582,6 +1591,6 @@ PRINT N'';
 PRINT N'PRINT N''Total Elapsed Time: '' +  STUFF(CONVERT(NVARCHAR(12), CURRENT_TIMESTAMP - @startTime, 14), 9, 1, ''.''); --hh:mi:ss.mmm';
 PRINT N'';
 PRINT N'PRINT N'''';';
-PRINT N'PRINT N''*****Recreation of databases on ' + quotename(@@SERVERNAME) + N' complete. Continue to Logshipping*****'';';
+PRINT N'PRINT N''*****Recreation of databases on '' + quotename(@@SERVERNAME) + N'' complete. Continue to Secondary Logshipping*****'';';
 PRINT N'';
 PRINT N'DROP TABLE #elapsedTimeAndFilePath';
