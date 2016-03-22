@@ -194,7 +194,7 @@ declare @secondaryServer sysname;
 select top 1 @secondaryServer = secondary_server from msdb.dbo.log_shipping_primary_secondaries;
 
 print N'/*';
-print N' * *****RUN ON ' + quotename(@secondaryServer) + N'*****';
+print N' * *****RUN ON ' + quotename(@secondaryServer) + N' AFTER SETTING UP PRMARY LOGSHIPPING*****';
 print N' * Use the following script to produce a T-SQL script to recreate primary instance databases on the secondary instance of a logshipping configuration';
 print N' *';
 print N' * Generated ' + convert(varchar, getdate()) + N' by ' + suser_sname();
