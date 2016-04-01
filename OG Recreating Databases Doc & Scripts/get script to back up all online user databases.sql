@@ -12,14 +12,27 @@ use master;
 go
 
 declare @backupFilePath nvarchar(260)
-      , @databaseFilter nvarchar(128)
       , @debug          bit
-      , @exclude_system bit;
+      , @exclude_system bit
+      , @tailLog        bit
+      , @copyOnly       bit;
+
+declare @databaseFilter table (
+   DatabaseName nvarchar(128)
+);
 
 set @debug = 1;
-set @exclude_system = 0;
+set @exclude_system = 1;
+set @tailLog = 0;
+set @copyOnly = 1;
 
---set @databaseFilter = N'Footprints';
+insert into @databaseFilter (
+   DatabaseName
+)
+select N'Footprints' --union all
+--select N'AssetManager'
+--select N'DBA';
+--;
 
 --================================
 
@@ -42,31 +55,36 @@ insert into @backup_files (
 )
 select
    d.name       as database_name
---replace works as such: replace(stringToSearchThrough, substringToReplace, valueToReplaceWith)
---The following is just setting up the name of the backup files for each db
- , replace(replace(replace(
-      N'{backup_path}{database_name}_backup_{backupTime}.bak'
+ , replace(replace(replace(replace(
+      N'{backup_path}{database_name}_backup_{backupTime}.{extension}'
     , N'{backup_path}', @backupFilePath)
     , N'{database_name}', d.name)
-    , N'{backupTime}', replace(replace(replace(convert(nvarchar(16), current_timestamp, 120), N'-', N''), N':', N''), N' ', N'')) as backup_file_name
+    , N'{backupTime}', replace(replace(replace(convert(nvarchar(16), current_timestamp, 120), N'-', N''), N':', N''), N' ', N''))
+	 , N'{extension}', case when @tailLog = 1 then N'trn' else N'bak' end) as backup_file_name
 from
    sys.databases as d
-
---We don't want to make backups if a db is offline, a system db, or if it matches our filter
 where
    (d.state_desc = N'ONLINE')
    and ((@exclude_system = 0)
       or (d.name not in (N'master', N'model', N'msdb')))
-   and ((@databaseFilter is null) 
-      or (d.name like N'%' + @databaseFilter + N'%'))
    and (d.name <> N'tempdb')
+   and ((not exists(select * from @databaseFilter))
+      or (exists(select * from @databaseFilter as df where d.name = df.DatabaseName)))
 order by
    d.name;
 
 select
-   @databaseFilter as DatabaseFilter
- , @backupFilePath as BackupFilePath
- , @exclude_system as ExcludeSystemDatabases;
+   @backupFilePath as BackupFilePath
+ , @exclude_system as ExcludeSystemDatabases
+ , @tailLog			 as TailLogBackup
+ , @copyOnly       as CopyOnly;
+
+select
+   *
+from
+   @databaseFilter as df
+order by
+   df.DatabaseName;
 
 if (@debug = 1) begin
 
@@ -79,11 +97,61 @@ if (@debug = 1) begin
 
 end;
 
+select
+   d.name  as database_name
+ , mf.[file_id]
+ , mf.name as logical_name
+ , mf.type_desc
+ , mf.physical_name
+from
+   sys.master_files as mf
+   inner join sys.databases as d
+      on mf.database_id = d.database_id
+   inner join @backup_files as bf
+      on d.name = bf.database_name
+order by
+   d.name
+ , mf.[file_id];
+
+
+
 --================================
+
+declare @numDatabases int;
+
+set @numDatabases = coalesce((select count(distinct bf.database_name) from @backup_files as bf), 0);
 
 print N'--================================';
 print N'--';
-print N'-- Use the following script to back up the following database backups on ' + quotename(@@servername) + ':';
+print N'-- Use the following script to take '
+    + case
+         when @numDatabases = 1
+            then N'a '
+         else N''
+      end
+    + case 
+         when @copyOnly = 1
+            then N'copy-only '
+         else N'' 
+      end
+    + case 
+         when @tailLog = 1 
+            then N'tail log ' 
+         else N'' 
+      end 
+    + N'backup'
+    + case
+         when @numDatabases = 1
+            then N''
+         else N's'
+      end 
+    + N' of the following database' 
+    + case
+         when @numDatabases = 1
+            then N''
+         else N's'
+      end 
+    + N' on ' + quotename(@@servername) + ':';
 print N'--';
 
 declare @databaseName   nvarchar(128)
@@ -138,25 +206,32 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
       bf.database_name;
 
    print N'';
-   print N'print N''Backing up database ' + quotename(@databaseName) + N' on ' + quotename(@@servername) + N' to file "' + replace(@backupFileName, N'''', N'''''') + '" at '' + convert(nvarchar, current_timestamp, 120) + '' as '' + quotename(suser_sname()) + N''...'';';
+   print N'print N''Backing up ' + case when @tailLog = 1 then N'the tail log of ' else N'' end + N'database ' + quotename(@databaseName) + N' on ' + quotename(@@servername) + N' to file "' + replace(@backupFileName, N'''', N'''''') + '" at '' + convert(nvarchar, current_timestamp, 120) + '' as '' + quotename(suser_sname()) + N''...'';';
    print N'print N''''';
    print N'go';
    print N'';
 
-   print N'backup database ' + quotename(@databaseName) + N' to disk = N''' + replace(@backupFileName, N'''', N'''''') + '''';
+   print N'backup ' + case when @tailLog = 1 then N'log' else N'database' end + N' ' + quotename(@databaseName) + N' to disk = N''' + replace(@backupFileName, N'''', N'''''') + '''';
    print N'   with';
    print N'      noformat';
    print N'    , init';
-   print N'    , name = N''' + @databaseName + N'-Full Database Backup''';
+   print N'    , name = N''' + @databaseName + N'-' + case when @tailLog = 1 then N'Tail Log' else N'Full' end + N' Database Backup''';
    print N'    , skip';
    print N'    , norewind';
    print N'    , nounload';
    print N'    , stats = 10';
+   if (@copyOnly = 1) begin
+      print N'    , copy_only';
+   end;
+   if (@tailLog = 1) begin
+      print N'    , no_truncate';
+      print N'    , norecovery';
+   end;
    print N'    , checksum;';
    print N'go';
 
    print N'';
-   print N'print N''Verifying backup of ' + quotename(@databaseName) + N' on ' + quotename(@@servername) + N' to file "' + replace(@backupFileName, N'''', N'''''') + '" at '' + convert(nvarchar, current_timestamp, 120) + '' as '' + quotename(suser_sname()) + N''...'';';
+   print N'print N''Verifying ' + case when @tailLog = 1 then N'tail log ' else N'' end + N'backup of ' + quotename(@databaseName) + N' on ' + quotename(@@servername) + N' to file "' + replace(@backupFileName, N'''', N'''''') + '" at '' + convert(nvarchar, current_timestamp, 120) + '' as '' + quotename(suser_sname()) + N''...'';';
    print N'print N''''';
    print N'go';
    print N'';
@@ -181,7 +256,7 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
    print N'';
       
    print N'print N'''';';
-   print N'print N''Backup of ' + quotename(@databaseName) + N' on ' + quotename(@@servername) + ' completed at '' + convert(nvarchar, current_timestamp, 120) + ''.'';';
+   print N'print N''' + case when @tailLog = 1 then N'Tail log backup' else N'Backup' end + N' of ' + quotename(@databaseName) + N' on ' + quotename(@@servername) + ' completed at '' + convert(nvarchar, current_timestamp, 120) + ''.'';';
    print N'print N'''';';
    print N'go';
 

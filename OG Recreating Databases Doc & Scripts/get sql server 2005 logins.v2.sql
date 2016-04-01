@@ -12,7 +12,6 @@
  */
 
 use master;
-
 go
 
 declare @filter_principal_name     sysname
@@ -95,148 +94,57 @@ declare @principals table (
  , is_expiration_checked bit
 );
 
-  /*
-  ==========================================================
-  First version check
-  The purpose of the following 2 try..catch statements is to direct the flow of the script based on whether or not the sql server version of the server supports user-defined server roles (sql server 2012 & later)
-  The dynamic sql assumes the server does, and if the server doesn't sp_executesql will return with an error that will be caught by the try, and the script will be directed to the sql server 2008 & earlier friendly code within the catch
- 
-  Initial insert into @principals. Principals are filtered based on if we want sql, windows, or mapped principals
-  We don't want any principals that are fixed roles or server roles (along with the rest of the conditionals in the where statement obvs)
-  ==========================================================
-  */
-
-declare @cmd nvarchar(max)
-       ,@params nvarchar(500);
-
-set @cmd = 'select
+insert into @principals (
+   name
+ , principal_id
+ , [sid]
+ , type_desc
+ , is_disabled
+ , create_date
+ , modify_date
+ , default_database_name
+ , default_language_name
+ , credential_id
+ , owning_principal_id
+ , is_fixed_role
+ , password_hash
+ , is_policy_checked
+ , is_expiration_checked
+)
+select
    sp.name
-   , sp.principal_id
-   , sp.[sid]
-   , sp.type_desc
-   , sp.is_disabled
-   , sp.create_date
-   , sp.modify_date
-   , sp.default_database_name
-   , sp.default_language_name
-   , sp.credential_id
-   , sp.owning_principal_id
-   , sp.is_fixed_role
-   , sl.password_hash
-   , sl.is_policy_checked
-   , sl.is_expiration_checked
+ , sp.principal_id
+ , sp.[sid]
+ , sp.type_desc
+ , sp.is_disabled
+ , sp.create_date
+ , sp.modify_date
+ , sp.default_database_name
+ , sp.default_language_name
+ , sp.credential_id
+ , sp.owning_principal_id
+ , sp.is_fixed_role
+ , sl.password_hash
+ , sl.is_policy_checked
+ , sl.is_expiration_checked
 from
    sys.server_principals as sp
    left outer join sys.sql_logins as sl 
       on sp.[sid] = sl.[sid]
 where
-   (sp.name <> N''sa'')
-   and (sp.[name] not like N''NT AUTHORITY\%'')
-   and (sp.[name] not like N''BUILTIN\%'')
-   and (sp.[name] not like ''NT SERVICE\%'')
-   and (sp.[name] not like N''#%'')
+   (sp.name <> N'sa')
+   and (sp.[name] not like N'NT AUTHORITY\%')
+   and (sp.[name] not like N'BUILTIN\%')
+   and (sp.[name] not like 'NT SERVICE\%')
+   and (sp.[name] not like N'#%')
    and (sp.is_fixed_role = 0)
-   and (sp.type_desc <> N''SERVER_ROLE'')
-   and ((sp.type_desc <> N''SQL_LOGIN'') or (@include_sqlAuthPrincipals = 1))
-   and ((sp.type_desc not like N''WINDOWS_%'') or (@include_winAuthPrincipals = 1))
-   and ((sp.type_desc not like N''%_MAPPED_LOGIN'') or (@include_mappedPrincipals = 1))
-   and ((nullif(@filter_principal_name, N'''') is null) or (sp.name = @filter_principal_name))
+   and (sp.type_desc <> N'SERVER_ROLE')
+   and ((sp.type_desc <> N'SQL_LOGIN') or (@include_sqlAuthPrincipals = 1))
+   and ((sp.type_desc not like N'WINDOWS_%') or (@include_winAuthPrincipals = 1))
+   and ((sp.type_desc not like N'%_MAPPED_LOGIN') or (@include_mappedPrincipals = 1))
+   and ((nullif(@filter_principal_name, N'') is null) or (sp.name = @filter_principal_name))
 order by
-   sp.name;'
-
-set @params = N'@filter_principal_name     sysname
-               , @include_sqlAuthPrincipals bit
-               , @include_winAuthPrincipals bit
-               , @include_mappedPrincipals  bit';
-
-begin try
-
-   -- Execute the sql server 2012 & later code
-
-   insert into @principals (
-      name
-    , principal_id
-    , [sid]
-    , type_desc
-    , is_disabled
-    , create_date
-    , modify_date
-    , default_database_name
-    , default_language_name
-    , credential_id
-    , owning_principal_id
-    , is_fixed_role
-    , password_hash
-    , is_policy_checked
-    , is_expiration_checked
-   )
-
-   exec sp_executesql @cmd, @params, 
-                            @filter_principal_name = @filter_principal_name
-                           ,@include_sqlAuthPrincipals = @include_sqlAuthPrincipals
-                           ,@include_winAuthPrincipals = @include_winAuthPrincipals
-                           ,@include_mappedPrincipals = @include_mappedPrincipals;
-
-end try
-begin catch
-
-   SELECT ERROR_MESSAGE() AS version_check_1_ErrorMessage
-
-   -- Execute sql server 2008 & ealier friendly code
-
-   insert into @principals (
-         name
-       , principal_id
-       , [sid]
-       , type_desc
-       , is_disabled
-       , create_date
-       , modify_date
-       , default_database_name
-       , default_language_name
-       , credential_id
-       , sp.is_fixed_role
-       , password_hash
-       , is_policy_checked
-       , is_expiration_checked
-      )
-      select
-         sp.name
-       , sp.principal_id
-       , sp.[sid]
-       , sp.type_desc
-       , sp.is_disabled
-       , sp.create_date
-       , sp.modify_date
-       , sp.default_database_name
-       , sp.default_language_name
-       , sp.credential_id
-       , 0                        -- 0 is hard coded here since principals that aren't server roles can't be fixed in sql server 2008 & ealier
-       , sl.password_hash
-       , sl.is_policy_checked
-       , sl.is_expiration_checked
-      from
-         sys.server_principals as sp
-         left outer join sys.sql_logins as sl 
-            on sp.[sid] = sl.[sid]
-      where
-         (sp.name <> N'sa')
-         and (sp.[name] not like N'NT AUTHORITY\%')
-         and (sp.[name] not like N'BUILTIN\%')
-         and (sp.[name] not like 'NT SERVICE\%')
-         and (sp.[name] not like N'#%')
-         and (sp.type_desc <> N'SERVER_ROLE')
-         and ((sp.type_desc <> N'SQL_LOGIN') or (@include_sqlAuthPrincipals = 1))
-         and ((sp.type_desc not like N'WINDOWS_%') or (@include_winAuthPrincipals = 1))
-         and ((sp.type_desc not like N'%_MAPPED_LOGIN') or (@include_mappedPrincipals = 1))
-         and ((nullif(@filter_principal_name, N'') is null) or (sp.name = @filter_principal_name))
-      order by
-         sp.name;
-
-end catch;
-
-
--- We use @membership to hold the roles that our principals in @principal have 
+   sp.name;
 
 declare @memberships table (
    role_principal_id   int
@@ -255,17 +163,11 @@ from
    inner join @principals as p
       on srm.member_principal_id = p.principal_id;
 
+declare @temp table (
+   principal_id int
+);
 
--- #temp is a temporary table instead of a table variable so it can be accessed within the dynamic sql involved in the 2nd insert to @principals
-
-IF OBJECT_ID('tempdb.dbo.#temp', 'U') IS NOT NULL
-    DROP TABLE #temp;
-CREATE TABLE #temp (principal_id int);
-
--- It appears that we're using #temp to hold the principals of the roles that our principals in @principals have, but aren't present within @principals themselves
--- For example if a @principal principal is a sysadmin, it will be included here (as we filtered against such principals (server role & fixed) in the initial @principals insert above) 
-
-insert into #temp (
+insert into @temp (
    principal_id
 )
 select
@@ -278,113 +180,39 @@ select
 from
    @principals as p;
 
-
--- Here we're adding the server role principals present in #temp to @principals
-
-while (exists(select * from #temp as t)) begin
+while (exists(select * from @temp as t)) begin
   
-  --==========================================================
-  -- Second version check
-  --==========================================================
-
-  set @cmd = 'select
-          sp.name
-        , sp.principal_id
-        , sp.[sid]
-        , sp.type_desc
-        , sp.is_disabled
-        , sp.create_date
-        , sp.modify_date
-        , sp.default_database_name
-        , sp.default_language_name
-        , sp.credential_id
-        , sp.owning_principal_id
-        , sp.is_fixed_role
-      from
-         sys.server_principals as sp
-         inner join #temp as t
-            on sp.principal_id = t.principal_id;'
-
-  begin try
-   
-      --Execute the sql server 2012 & later code
-      
-      insert into @principals (
-         name
-       , principal_id
-       , [sid]
-       , type_desc
-       , is_disabled
-       , create_date
-       , modify_date
-       , default_database_name
-       , default_language_name
-       , credential_id
-       , owning_principal_id
-       , is_fixed_role
-      )
-     
-      exec sp_executesql @cmd;
-
-   end try
-   begin catch
-
-      select ERROR_MESSAGE() AS version_check_2_ErrorMessage
-
-      -- Execute sql server 2008 & ealier friendly code
-
-      insert into @principals (
-         name
-         , principal_id
-         , [sid]
-         , type_desc
-         , is_disabled
-         , create_date
-         , modify_date
-         , default_database_name
-         , default_language_name
-         , credential_id
-         , is_fixed_role
-      )
-      select
-           sp.name
-         , sp.principal_id
-         , sp.[sid]
-         , sp.type_desc
-         , sp.is_disabled
-         , sp.create_date
-         , sp.modify_date
-         , sp.default_database_name
-         , sp.default_language_name
-         , sp.credential_id
-         , 1                        -- 1 is hard coded here since server roles in sql server 2008 & earlier have to be fixed
-      from
-         sys.server_principals as sp
-         inner join #temp as t
-            on sp.principal_id = t.principal_id;
-
-   end catch;
-
-   /*
-   We delete and then insert into #temp again in order to include user-defined server roles that are members of other server roles (nested membership).
-   Example:
-
-   @principals holds one principal with id = 100;
-   Say we have the following within [sys.server_role_members]:
-
-   role_id | member_id
-   ---------------
-   1       | 100
-   ---------------
-   2       | 1
-
-   When we join this to @principals as we're populating @memberships, @memberships will only have the tupe 1|100 inserted into it as it is the only tuple that has a member_id that exists within @principals
-   Next we take all of the role_id's within @memberships that don't exist within @principals and insert them into #temp. In this case 1.
-   Now we want @principals to hold the role_id of every principal within it that occupies one as they're going to be relevant when recreating this principals, so we insert the server role principal 1 within #temp into @principals
-   But what about the server role with an id of 2? 1 is now a principal within @principals but wasn't included. The solution is what we're doing below. 
-   Essentially we're just redoing the entire loop with the new @principals that now includes server role principal 1 so that we can include the nested server roles that we filtered out before.
-
-   */
+   insert into @principals (
+      name
+    , principal_id
+    , [sid]
+    , type_desc
+    , is_disabled
+    , create_date
+    , modify_date
+    , default_database_name
+    , default_language_name
+    , credential_id
+    , owning_principal_id
+    , is_fixed_role
+   )
+   select
+       sp.name
+     , sp.principal_id
+     , sp.[sid]
+     , sp.type_desc
+     , sp.is_disabled
+     , sp.create_date
+     , sp.modify_date
+     , sp.default_database_name
+     , sp.default_language_name
+     , sp.credential_id
+     , sp.owning_principal_id
+     , sp.is_fixed_role
+   from
+      sys.server_principals as sp
+      inner join @temp as t
+         on sp.principal_id = t.principal_id;
 
    insert into @memberships (
       role_principal_id
@@ -392,17 +220,17 @@ while (exists(select * from #temp as t)) begin
    )
    select
       srm.role_principal_id
-    , srm.member_principal_id -- New members are now the server role principals that were just inserted into @principals
+    , srm.member_principal_id
    from
       sys.server_role_members as srm
       inner join @principals as p
          on srm.member_principal_id = p.principal_id
-      inner join #temp as t
+      inner join @temp as t
          on srm.member_principal_id = t.principal_id;
 
-   delete from #temp;
+   delete from @temp;
       
-   insert into #temp (
+   insert into @temp (
       principal_id
    )
    select
@@ -439,15 +267,6 @@ if @debug = 1 begin
     , m.role_principal_id;
 
 end;
-
-
-
---=============================================================================
--- *
--- * Begin outputting the script
--- *
---=============================================================================
-
 
 declare @tmpstr nvarchar(4000);
 
@@ -502,13 +321,7 @@ print N' * Server privileges are not recreated by this script!';
 declare @name      sysname
       , @role_name sysname;
 
---
--- Fixed roles are present by default in every database. As such they don't need to be recreated, which is why we're not mentioning any of the fixed principals w/in @principals here
---
-
--- Output the recreated server roles
-
-if exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.type_desc = N'SERVER_ROLE')) begin 
+if exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.type_desc = N'SERVER_ROLE')) begin
 
    print N' * ';
    print N' * Server roles recreated by this script:';
@@ -534,8 +347,6 @@ if exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.type
    end;
 
 end;
-
--- Output the recreated principals
 
 if exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.type_desc <> N'SERVER_ROLE')) begin
 
@@ -572,9 +383,7 @@ print N'use master;';
 print N'go';
 print N'';
 
-
-
-declare @principal_id          int          -- How we're addressing each principal
+declare @principal_id          int
       , @sid                   varbinary(85)
       , @sid_string            nvarchar(512)
       , @type_desc             nvarchar(60)
@@ -595,8 +404,6 @@ declare @principal_id          int          -- How we're addressing each princip
 set @x = N'<root></root>';
 
 set @role_name = N'';
-
--- Create the user-defined server roles
 
 while (exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.type_desc = N'SERVER_ROLE') and (p.name > @role_name))) begin
 
@@ -632,8 +439,6 @@ while (exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.
 end;
 
 set @name = N'';
-
--- Recreate principals
 
 while (exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.type_desc <> N'SERVER_ROLE') and (p.name > @name))) begin
 
@@ -775,5 +580,3 @@ while (exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.
    print N'';
 
 end;
-
-drop table #temp;
