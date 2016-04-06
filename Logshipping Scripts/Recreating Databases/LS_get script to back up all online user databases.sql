@@ -26,10 +26,10 @@ set @exclude_system = 1;
 set @tailLog = 0;
 set @copyOnly = 1;
 
-insert into @databaseFilter (
-   DatabaseName
-)
-select N'Footprints' --union all
+--insert into @databaseFilter (
+--  DatabaseName
+--)
+--select N'Footprints' --union all
 --select N'AssetManager'
 --select N'DBA';
 --;
@@ -44,12 +44,15 @@ exec xp_instance_regread
 
 if (@backupFilePath not like N'%\') set @backupFilePath = @backupFilePath + N'\';
 
-declare @backup_files table (
+if object_id(N'tempdb..#backup_files') is not null 
+   drop table #backup_files;
+
+create table #backup_files (
    database_name    nvarchar(128) not null primary key clustered
  , backup_file_name nvarchar(260)
 );
 
-insert into @backup_files (
+insert into #backup_files (
    database_name
  , backup_file_name
 )
@@ -62,7 +65,7 @@ select
     , N'{backupTime}', replace(replace(replace(convert(nvarchar(16), current_timestamp, 120), N'-', N''), N':', N''), N' ', N''))
 	 , N'{extension}', case when @tailLog = 1 then N'trn' else N'bak' end) as backup_file_name
 from
-   sys.databases as d
+   sys.databases as d inner join msdb.dbo.log_shipping_primary_databases as lspd on (d.name = lspd.primary_database)  -- Filter for LS databases
 where
    (d.state_desc = N'ONLINE')
    and ((@exclude_system = 0)
@@ -91,7 +94,7 @@ if (@debug = 1) begin
    select
       *
    from
-      @backup_files as bf
+      #backup_files as bf
    order by
       bf.database_name;
 
@@ -107,7 +110,7 @@ from
    sys.master_files as mf
    inner join sys.databases as d
       on mf.database_id = d.database_id
-   inner join @backup_files as bf
+   inner join #backup_files as bf
       on d.name = bf.database_name
 order by
    d.name
@@ -119,7 +122,7 @@ order by
 
 declare @numDatabases int;
 
-set @numDatabases = coalesce((select count(distinct bf.database_name) from @backup_files as bf), 0);
+set @numDatabases = coalesce((select count(distinct bf.database_name) from #backup_files as bf), 0);
 
 print N'--================================';
 print N'--';
@@ -158,17 +161,17 @@ declare @databaseName   nvarchar(128)
       , @backupFileName nvarchar(260)
       , @maxLen         int;
 
-set @maxLen = (select max(datalength(bf.database_name)) from @backup_files as bf);
+set @maxLen = (select max(datalength(bf.database_name)) from #backup_files as bf);
 
 set @databaseName = N'';
 
-while exists(select * from @backup_files as bf where bf.database_name > @databaseName) begin
+while exists(select * from #backup_files as bf where bf.database_name > @databaseName) begin
 
    select top 1
       @databaseName = bf.database_name
     , @backupFileName = bf.backup_file_name
    from
-      @backup_files as bf
+      #backup_files as bf
    where
       (bf.database_name > @databaseName)
    order by
@@ -193,13 +196,13 @@ set @databaseName = N'';
 declare @cmd    nvarchar(max)
       , @fileID int;
 
-while exists(select * from @backup_files as bf where bf.database_name > @databaseName) begin
+while exists(select * from #backup_files as bf where bf.database_name > @databaseName) begin
 
    select top 1
       @databaseName = bf.database_name
     , @backupFileName = replace(bf.backup_file_name, N'''', N'''''')
    from
-      @backup_files as bf
+      #backup_files as bf
    where
       (bf.database_name > @databaseName)
    order by
@@ -213,21 +216,21 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
 
    print N'backup ' + case when @tailLog = 1 then N'log' else N'database' end + N' ' + quotename(@databaseName) + N' to disk = N''' + replace(@backupFileName, N'''', N'''''') + '''';
    print N'   with';
-   print N'      noformat';
-   print N'    , init';
+   print N'      noformat';      -- Whether to create a new or override an existing media set (noformat creates a new media set)
+   print N'    , init';          -- Specifies that all backup sets within the device should be overwritten, but preserves the media header
    print N'    , name = N''' + @databaseName + N'-' + case when @tailLog = 1 then N'Tail Log' else N'Full' end + N' Database Backup''';
-   print N'    , skip';
-   print N'    , norewind';
-   print N'    , nounload';
+   print N'    , skip';          -- Skip/noskip controls whether a backup operation checks the expiration date and time of the backup sets on the media before overwriting (skip = don't check)
+   print N'    , norewind';      -- For TAPE devices. Whether to unwind then release the tape or keep it open after the backup. Keeping it open improves performance when performing multiple backups to the tape
+   print N'    , nounload';      -- Implied by norewind. UNLOAD/NOUNLOAD whether to unload or keep loaded the tape on the tape drive after the backup
    print N'    , stats = 10';
    if (@copyOnly = 1) begin
-      print N'    , copy_only';
+      print N'    , copy_only';  -- Makes a backup that doesn't interfere with the normal sequence of server backups. Useful when making backups for special purposes
    end;
    if (@tailLog = 1) begin
       print N'    , no_truncate';
       print N'    , norecovery';
    end;
-   print N'    , checksum;';
+   print N'    , checksum;';     -- Error management. Specifies that the backup operation will verify each page for checksum and torn page. Generates a checksum for the entire backup
    print N'go';
 
    print N'';
@@ -263,3 +266,5 @@ while exists(select * from @backup_files as bf where bf.database_name > @databas
 end;
 
 go
+
+
