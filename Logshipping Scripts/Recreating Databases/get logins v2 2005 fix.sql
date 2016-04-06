@@ -27,7 +27,7 @@ declare @filter_principal_name     sysname
 set @include_db = 1;
 set @include_lang = 1;
 set @include_role = 1;
-set @debug = 1;
+set @debug = 0;
 
 set @include_sqlAuthPrincipals = 1;
 set @include_winAuthPrincipals = 1;
@@ -179,8 +179,9 @@ begin try
 
 end try
 begin catch
-
-   SELECT ERROR_MESSAGE() AS version_check_1_ErrorMessage
+   
+   if (@debug = 1)
+      SELECT ERROR_MESSAGE() AS version_check_1_ErrorMessage
 
    -- Execute sql server 2008 & ealier friendly code
 
@@ -328,8 +329,9 @@ while (exists(select * from #temp as t)) begin
 
    end try
    begin catch
-
-      select ERROR_MESSAGE() AS version_check_2_ErrorMessage
+      
+      if (@debug = 1)
+         select ERROR_MESSAGE() AS version_check_2_ErrorMessage
 
       -- Execute sql server 2008 & ealier friendly code
 
