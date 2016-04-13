@@ -55,7 +55,7 @@ insert into @backup_files (
  , backup_type
  , backup_file_name
 )
-select N'Test', 0, N'FULL', N'C:\DBFiles\Backup\Full\Test_backup_201604131507.bak';
+select N'Test', 0, N'FULL', N'C:\DBFiles\Backup\Full\Test_backup_201604131700.bak';
 
 
 insert into @database_files (
@@ -67,6 +67,8 @@ insert into @database_files (
 )
 select N'Test', 1, N'Test', N'ROWS', N'Test.mdf' union all
 select N'Test', 2, N'Test_log', N'LOG', N'Test_log.ldf';
+
+
 
 
 --================================

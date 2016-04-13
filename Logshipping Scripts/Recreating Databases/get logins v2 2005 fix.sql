@@ -27,7 +27,7 @@ declare @filter_principal_name     sysname
 set @include_db = 1;
 set @include_lang = 1;
 set @include_role = 1;
-set @debug = 1;
+set @debug = 0;
 
 set @include_sqlAuthPrincipals = 1;
 set @include_winAuthPrincipals = 1;

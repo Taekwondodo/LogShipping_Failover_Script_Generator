@@ -235,11 +235,12 @@ PRINT N'    DROP TABLE #elapsedTimeAndFilePath';
 PRINT N'';
 PRINT N'CREATE TABLE #elapsedTimeAndFilePath (timestamps DATETIME, file_path NVARCHAR(500));';
 PRINT N'';
-PRINT N'INSERT INTO #elapsedTimeAndFilePath SELECT CURRENT_TIMESTAMP, @backupDestinationFilePath;';
+PRINT N'INSERT INTO #elapsedTimeAndFilePath SELECT CURRENT_TIMESTAMP, N'' '';';
 PRINT N'';
 
-SET @databaseName = N'';
 raiserror('',0,1) WITH NOWAIT; --flush print buffer
+
+SET @databaseName = N'';
 
 WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databaseName ORDER BY database_name ASC)BEGIN
 
@@ -286,9 +287,9 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'	DECLARE @LS_Secondary__RestoreJobId	AS uniqueidentifier ';
    PRINT N'	DECLARE @LS_Secondary__SecondaryId	AS uniqueidentifier ';
    PRINT N'	DECLARE @LS_Add_RetCode	As int ';
-   PRINT N'    DECLARE @backupDestinationFilePath AS NVARCHAR(500)';
+   --PRINT N'    DECLARE @backupDestinationFilePath AS NVARCHAR(500)';
    PRINT N'';
-   --PRINT N'    SELECT TOP 1 @backupDestinationFilePath = file_path FROM #elapsedTimeAndFilePath;';
+   --PRINT N'    SELECT TOP 1 @backupDestinationFilePath = file_path FROM #elapsedTimeAndFilePath;'; --Taken out as we're explicitly stating the filepath in the defaults
    PRINT N'';
    PRINT N'';
    PRINT N'	EXEC @LS_Add_RetCode = master.dbo.sp_add_log_shipping_secondary_primary ';
@@ -370,7 +371,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    PRINT N'';
    PRINT N'		EXEC @LS_Add_RetCode2 = master.dbo.sp_add_log_shipping_secondary_database ';
    PRINT N'				 @secondary_database = N''' + @databaseName + N'''';
-   PRINT N'				,@primary_server = N''' + @secondaryServer + N'''';
+   PRINT N'				,@primary_server = N''' + @@SERVERNAME + N'''';
    PRINT N'				,@primary_database = N''' + @databaseName + N'''';
    PRINT N'				,@restore_delay = ' + CAST(@restore_delay AS VARCHAR);
    PRINT N'				,@restore_mode = ' + CAST(@restore_mode AS VARCHAR);

@@ -24,7 +24,7 @@ declare @databaseFilter table (
 set @debug = 1;
 set @exclude_system = 1;
 set @tailLog = 0;
-set @copyOnly = 1;
+set @copyOnly = 0;
 
 --insert into @databaseFilter (
 --  DatabaseName
