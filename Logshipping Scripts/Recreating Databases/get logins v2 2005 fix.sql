@@ -27,7 +27,7 @@ declare @filter_principal_name     sysname
 set @include_db = 1;
 set @include_lang = 1;
 set @include_role = 1;
-set @debug = 0;
+set @debug = 1;
 
 set @include_sqlAuthPrincipals = 1;
 set @include_winAuthPrincipals = 1;
@@ -747,7 +747,7 @@ while (exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.
          select top 1
             @role_principal_id = m.role_principal_id
          from
-            @memberships as m
+            @memberships as m 
          where
             (m.member_principal_id = @principal_id)
             and (m.role_principal_id > @role_principal_id)
@@ -763,7 +763,12 @@ while (exists(select * from @principals as p where (p.is_fixed_role = 0) and (p.
                p.principal_id = @role_principal_id
          );
 
+         -- alter server role was introduced in SQL 2012 so we need to use sp_addsrvrolemember for earlier versions
+
          set @tmpstr = N'alter server role ' + quotename(@role_name) + N' add member ' + quotename(@name) + N';';
+
+         if (@@VERSION like N'%2005%' OR @@VERSION like N'%2008')
+            set @tmpstr = N'EXEC sp_addsrvrolemember ''' + @name + N''', ''' + @role_name + N''';';
 
          print @tmpstr;
          print N'go';

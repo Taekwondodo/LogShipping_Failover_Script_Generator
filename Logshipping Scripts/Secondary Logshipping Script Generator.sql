@@ -2,7 +2,7 @@
 
 This script is ran on the primary server of your logshipping configuration
 
-Use this script to produce a T-SQL script to setup the logshipping secondary instance
+Use this script to produce a T-SQL script to setup the secondary logshipping instance
 
 */
 
@@ -140,7 +140,7 @@ SET @restore_all = 1;            -- 1 = Restore all available transaction logs f
 SET @restore_mode = 0;           -- 0 = NORECOVERY, 1 = STANDBY
 SET @disconnect_users = 0;       -- Whether or not to disconnect users from the secondary DB during a restore operation. 0 = yes, 1 = no
 SET @backupDestinationDirectory = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups\Secondary (Copy Job)'; -- Where the copy job will store the log backups from the primary instance
-SET @standbyDestinationDirectory = N'\\pbrc.edu\files\share\MIS\DBA\Log Shipping Lab\Backups\Standby Files\PerformanceTest.ldf'; -- Location of database standby files
+
 --
 -- End of default values setup
 --
@@ -213,6 +213,8 @@ PRINT N'';
 PRINT N'PRINT N''Beginning Secondary Logshipping Configurations...'';';
 PRINT N'PRINT N'''';';
 PRINT N'';
+-- This part is commented out as for now we're going to instead explicitly state the log backup destination above along with the other defaults
+/*
 PRINT N'DECLARE @backupDestinationFilePath NVARCHAR(500);'
 PRINT N'';
 PRINT N'EXEC xp_instance_regread';
@@ -224,6 +226,7 @@ PRINT N'';
 PRINT N'--The destination for the log backups that the copy job retrieves is by default determined by the local registry via xp_instance_regread above.'
 PRINT N'--If you''d like to provide another default file path, uncomment the following SET statement to override the location provided by the registry.';
 PRINT N'--SET @backupDestinationFilePath = ;';
+*/
 PRINT N'';
 PRINT N'-- #elapsedTimeAndFilePath is used to keep track of the total execution time of the script, along with holding the backup destination file path across batches ';
 PRINT N'';
@@ -265,22 +268,7 @@ WHILE EXISTS(SELECT TOP 1 * FROM @primaryDefaults WHERE database_name > @databas
    ORDER BY 
       database_name ASC;
 
-   PRINT N'GO';
-   PRINT N'';
-   PRINT N'BEGIN TRY';
-   PRINT N'';
-   PRINT N'    --Create the secondary instance databases';
-   PRINT N'';
-   PRINT N'    RESTORE DATABASE [' + @databaseName + N'] FROM DISK = N''' + @backupSourceDirectory + N'\' + @databaseName + N'_InitLSBackup.bak''';
-   PRINT N'    WITH REPLACE, STANDBY = N''' + @standbySourceDirectory + N'\' + @databaseName + N'.ldf''';
 
-
-
-
-
-   PRINT N'END TRY';
-   PRINT N'BEGIN CATCH';
-   PRINT N'END CATCH;';
    PRINT N'';
    PRINT N'GO';
    PRINT N'';

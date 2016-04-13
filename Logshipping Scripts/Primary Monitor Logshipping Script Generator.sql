@@ -80,7 +80,7 @@ while (exists(select top 1 * from @databases as d where d.database_name > @datab
 end
 
 PRINT N'';
-PRINT N'--Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
+PRINT N'-- Script generated @ ' + convert(nvarchar, current_timestamp, 120) + N' by ' + quotename(suser_sname()) + N'.';
 PRINT N'';
 PRINT N'--================================';
 PRINT N'';

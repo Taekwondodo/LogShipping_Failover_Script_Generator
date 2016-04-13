@@ -116,8 +116,6 @@ order by
    d.name
  , mf.[file_id];
 
-
-
 --================================
 
 declare @numDatabases int;
@@ -267,4 +265,4 @@ end;
 
 go
 
-
+select * from msdb.dbo.log_shipping_primary_secondaries;

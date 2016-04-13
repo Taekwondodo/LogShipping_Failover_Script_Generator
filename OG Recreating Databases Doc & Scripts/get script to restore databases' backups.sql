@@ -46,7 +46,7 @@ declare @dataFilePath nvarchar(260)
 
 set @debug = 1;
 set @ownerLogin = N'sa';
-set @withRecovery = 1;
+set @withRecovery = 0; -- For LS purposes we want the databases to be either recovering or standby/read-only
 set @quiesce = 1;
 
 insert into @backup_files (
@@ -55,7 +55,8 @@ insert into @backup_files (
  , backup_type
  , backup_file_name
 )
-select N'Footprints', 0, N'FULL', N'G:\DBFiles\(default)\Backups\Original\Footprints_backup_201603142130.bak';
+select N'Test', 0, N'FULL', N'C:\DBFiles\Backup\Full\Test_backup_201604131507.bak';
+
 
 insert into @database_files (
    database_name
@@ -64,60 +65,9 @@ insert into @database_files (
  , type_desc
  , physical_name
 )
-select N'Footprints', 1, N'Footprints', N'ROWS', N'Footprints.mdf' union all
-select N'Footprints', 2, N'Footprints_log', N'LOG', N'Footprints_log.ldf' union all
-select N'Footprints', 65537, N'sysft_MASTER1_desc', N'FULLTEXT', N'MASTER1_desc' union all
-select N'Footprints', 65538, N'sysft_MASTER1_ABDATA_desc', N'FULLTEXT', N'MASTER1_ABDATA_desc' union all
-select N'Footprints', 65539, N'sysft_MASTER2_desc', N'FULLTEXT', N'MASTER2_desc' union all
-select N'Footprints', 65540, N'sysft_MASTER2_ABDATA_desc', N'FULLTEXT', N'MASTER2_ABDATA_desc' union all
-select N'Footprints', 65541, N'sysft_MASTER3_desc', N'FULLTEXT', N'MASTER3_desc' union all
-select N'Footprints', 65542, N'sysft_MASTER3_ABDATA_desc', N'FULLTEXT', N'MASTER3_ABDATA_desc' union all
-select N'Footprints', 65543, N'sysft_MASTER4_desc', N'FULLTEXT', N'MASTER4_desc' union all
-select N'Footprints', 65544, N'sysft_MASTER4_ABDATA_desc', N'FULLTEXT', N'MASTER4_ABDATA_desc' union all
-select N'Footprints', 65545, N'sysft_MASTER5_desc', N'FULLTEXT', N'MASTER5_desc' union all
-select N'Footprints', 65546, N'sysft_MASTER5_ABDATA_desc', N'FULLTEXT', N'MASTER5_ABDATA_desc' union all
-select N'Footprints', 65547, N'sysft_MASTER6_desc', N'FULLTEXT', N'MASTER6_desc' union all
-select N'Footprints', 65548, N'sysft_MASTER6_ABDATA_desc', N'FULLTEXT', N'MASTER6_ABDATA_desc' union all
-select N'Footprints', 65549, N'sysft_MASTER7_desc', N'FULLTEXT', N'MASTER7_desc' union all
-select N'Footprints', 65550, N'sysft_MASTER7_ABDATA_desc', N'FULLTEXT', N'MASTER7_ABDATA_desc' union all
-select N'Footprints', 65551, N'sysft_MASTER8_desc', N'FULLTEXT', N'MASTER8_desc' union all
-select N'Footprints', 65552, N'sysft_MASTER8_ABDATA_desc', N'FULLTEXT', N'MASTER8_ABDATA_desc' union all
-select N'Footprints', 65553, N'sysft_MASTER9_desc', N'FULLTEXT', N'MASTER9_desc' union all
-select N'Footprints', 65554, N'sysft_MASTER9_ABDATA_desc', N'FULLTEXT', N'MASTER9_ABDATA_desc' union all
-select N'Footprints', 65555, N'sysft_MASTER10_desc', N'FULLTEXT', N'MASTER10_desc' union all
-select N'Footprints', 65556, N'sysft_MASTER10_ABDATA_desc', N'FULLTEXT', N'MASTER10_ABDATA_desc' union all
-select N'Footprints', 65557, N'sysft_MASTER11_desc', N'FULLTEXT', N'MASTER11_desc' union all
-select N'Footprints', 65558, N'sysft_MASTER11_ABDATA_desc', N'FULLTEXT', N'MASTER11_ABDATA_desc' union all
-select N'Footprints', 65559, N'sysft_MASTER12_desc', N'FULLTEXT', N'MASTER12_desc' union all
-select N'Footprints', 65560, N'sysft_MASTER12_ABDATA_desc', N'FULLTEXT', N'MASTER12_ABDATA_desc' union all
-select N'Footprints', 65561, N'sysft_MASTER13_desc', N'FULLTEXT', N'MASTER13_desc' union all
-select N'Footprints', 65562, N'sysft_MASTER13_ABDATA_desc', N'FULLTEXT', N'MASTER13_ABDATA_desc' union all
-select N'Footprints', 65563, N'sysft_MASTER14_desc', N'FULLTEXT', N'MASTER14_desc' union all
-select N'Footprints', 65564, N'sysft_MASTER14_ABDATA_desc', N'FULLTEXT', N'MASTER14_ABDATA_desc' union all
-select N'Footprints', 65565, N'sysft_MASTER15_desc', N'FULLTEXT', N'MASTER15_desc' union all
-select N'Footprints', 65566, N'sysft_MASTER15_ABDATA_desc', N'FULLTEXT', N'MASTER15_ABDATA_desc' union all
-select N'Footprints', 65567, N'sysft_MASTER16_desc', N'FULLTEXT', N'MASTER16_desc' union all
-select N'Footprints', 65568, N'sysft_MASTER16_ABDATA_desc', N'FULLTEXT', N'MASTER16_ABDATA_desc' union all
-select N'Footprints', 65569, N'sysft_MASTER17_desc', N'FULLTEXT', N'MASTER17_desc' union all
-select N'Footprints', 65570, N'sysft_MASTER17_ABDATA_desc', N'FULLTEXT', N'MASTER17_ABDATA_desc' union all
-select N'Footprints', 65571, N'sysft_MASTER18_desc', N'FULLTEXT', N'MASTER18_desc' union all
-select N'Footprints', 65572, N'sysft_MASTER18_ABDATA_desc', N'FULLTEXT', N'MASTER18_ABDATA_desc' union all
-select N'Footprints', 65573, N'sysft_MASTER19_desc', N'FULLTEXT', N'MASTER19_desc' union all
-select N'Footprints', 65574, N'sysft_MASTER19_ABDATA_desc', N'FULLTEXT', N'MASTER19_ABDATA_desc' union all
-select N'Footprints', 65575, N'sysft_MASTER20_desc', N'FULLTEXT', N'MASTER20_desc' union all
-select N'Footprints', 65576, N'sysft_MASTER20_ABDATA_desc', N'FULLTEXT', N'MASTER20_ABDATA_desc' union all
-select N'Footprints', 65577, N'sysft_MASTER21_desc', N'FULLTEXT', N'MASTER21_desc' union all
-select N'Footprints', 65578, N'sysft_MASTER21_ABDATA_desc', N'FULLTEXT', N'MASTER21_ABDATA_desc' union all
-select N'Footprints', 65579, N'sysft_MASTER22_desc', N'FULLTEXT', N'MASTER22_desc' union all
-select N'Footprints', 65580, N'sysft_MASTER22_ABDATA_desc', N'FULLTEXT', N'MASTER22_ABDATA_desc' union all
-select N'Footprints', 65581, N'sysft_MASTER23_desc', N'FULLTEXT', N'MASTER23_desc' union all
-select N'Footprints', 65582, N'sysft_MASTER23_ABDATA_desc', N'FULLTEXT', N'MASTER23_ABDATA_desc' union all
-select N'Footprints', 65583, N'sysft_MASTER24_desc', N'FULLTEXT', N'MASTER24_desc' union all
-select N'Footprints', 65584, N'sysft_MASTER24_ABDATA_desc', N'FULLTEXT', N'MASTER24_ABDATA_desc' union all
-select N'Footprints', 65585, N'sysft_MASTER25_desc', N'FULLTEXT', N'MASTER25_desc' union all
-select N'Footprints', 65586, N'sysft_MASTER25_ABDATA_desc', N'FULLTEXT', N'MASTER25_ABDATA_desc' union all
-select N'Footprints', 65587, N'sysft_MASTER26_desc', N'FULLTEXT', N'MASTER26_desc' union all
-select N'Footprints', 65588, N'sysft_MASTER26_ABDATA_desc', N'FULLTEXT', N'MASTER26_ABDATA_desc';
+select N'Test', 1, N'Test', N'ROWS', N'Test.mdf' union all
+select N'Test', 2, N'Test_log', N'LOG', N'Test_log.ldf';
+
 
 --================================
 
